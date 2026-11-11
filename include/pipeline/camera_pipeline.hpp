@@ -66,6 +66,15 @@ private:
     void ai_worker_loop();
     void detect_faces(std::vector<DetectionBox>& boxes);
 
+    struct Anchor {
+        float x_center;
+        float y_center;
+        float w;
+        float h;
+    };
+    void init_anchors();
+    std::vector<Anchor> anchors_;
+
     CameraConfig config_;
     std::atomic<bool> is_running_{false};
 

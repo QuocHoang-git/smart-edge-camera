@@ -15,6 +15,40 @@ namespace edge_camera {
 CameraPipeline::CameraPipeline(CameraConfig config)
     : config_(config),
       camera_(config.video_device) {
+    init_anchors();
+}
+
+void CameraPipeline::init_anchors() {
+    anchors_.clear();
+    anchors_.reserve(896);
+
+    // Layer 1: Stride 8, 16x16 feature map, 2 anchors per cell -> 512 anchors
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            for (int a = 0; a < 2; ++a) {
+                Anchor anc;
+                anc.x_center = (x + 0.5f) * 8.0f / 128.0f;
+                anc.y_center = (y + 0.5f) * 8.0f / 128.0f;
+                anc.w = 1.0f;
+                anc.h = 1.0f;
+                anchors_.push_back(anc);
+            }
+        }
+    }
+
+    // Layer 2: Stride 16, 8x8 feature map, 6 anchors per cell -> 384 anchors
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            for (int a = 0; a < 6; ++a) {
+                Anchor anc;
+                anc.x_center = (x + 0.5f) * 16.0f / 128.0f;
+                anc.y_center = (y + 0.5f) * 16.0f / 128.0f;
+                anc.w = 1.0f;
+                anc.h = 1.0f;
+                anchors_.push_back(anc);
+            }
+        }
+    }
 }
 
 CameraPipeline::~CameraPipeline() {
@@ -223,11 +257,23 @@ void CameraPipeline::capture_and_stream_loop() {
                         int bw = static_cast<int>((box.xmax - box.xmin) * config_.sub_width);
                         int bh = static_cast<int>((box.ymax - box.ymin) * config_.sub_height);
 
-                        rga_.draw_rect_dma(
-                            sub_stream_dma_.fd(), sub_stream_dma_.size(),
-                            config_.sub_width, config_.sub_height,
-                            bx, by, bw, bh, 2, 0x0000FF00
-                        );
+                        // Clamp coordinates to safe frame boundaries
+                        if (bx < 0) bx = 0;
+                        if (by < 0) by = 0;
+                        if (bx + bw > static_cast<int>(config_.sub_width)) {
+                            bw = static_cast<int>(config_.sub_width) - bx;
+                        }
+                        if (by + bh > static_cast<int>(config_.sub_height)) {
+                            bh = static_cast<int>(config_.sub_height) - by;
+                        }
+
+                        if (bw > 6 && bh > 6) {
+                            rga_.draw_rect_dma(
+                                sub_stream_dma_.fd(), sub_stream_dma_.size(),
+                                config_.sub_width, config_.sub_height,
+                                bx, by, bw, bh, 2, 0x0000FF00
+                            );
+                        }
                     }
                 }
 
@@ -308,40 +354,93 @@ void CameraPipeline::ai_worker_loop() {
 void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
     boxes.clear();
 
-    if (npu_.output_count() < 2) return;
+    if (npu_.output_count() < 2 || anchors_.size() != 896) return;
 
-    void* score_ptr = npu_.output_data(1);
+    const void* loc_ptr = npu_.output_data(0);
+    const rknn_tensor_attr* loc_attr = npu_.output_attr(0);
+    const void* score_ptr = npu_.output_data(1);
     const rknn_tensor_attr* score_attr = npu_.output_attr(1);
 
-    if (!score_ptr || !score_attr) return;
+    if (!loc_ptr || !loc_attr || !score_ptr || !score_attr) return;
 
-    // BlazeFace Anchor Grid parsing
-    constexpr uint32_t NUM_ANCHORS = 896;
-    float max_score = -1.0f;
+    const int8_t* loc_data = reinterpret_cast<const int8_t*>(loc_ptr);
+    const int8_t* score_data = reinterpret_cast<const int8_t*>(score_ptr);
 
-    if (score_attr->type == RKNN_TENSOR_INT8) {
-        const int8_t* scores = reinterpret_cast<const int8_t*>(score_ptr);
-        int32_t zp = score_attr->zp;
-        float scale = score_attr->scale;
+    float loc_scale = loc_attr->scale;
+    int32_t loc_zp = loc_attr->zp;
+    float score_scale = score_attr->scale;
+    int32_t score_zp = score_attr->zp;
 
-        for (uint32_t i = 0; i < NUM_ANCHORS && i < score_attr->size; ++i) {
-            float s = (static_cast<float>(scores[i]) - zp) * scale;
-            float prob = 1.0f / (1.0f + std::exp(-s));
-            if (prob > max_score) {
-                max_score = prob;
-            }
+    constexpr float SCORE_THRESHOLD = 0.50f;
+    constexpr float IOU_THRESHOLD = 0.30f;
+
+    std::vector<DetectionBox> candidates;
+
+    for (size_t i = 0; i < 896; ++i) {
+        float logit = (static_cast<float>(score_data[i]) - score_zp) * score_scale;
+        float prob = 1.0f / (1.0f + std::exp(-logit));
+
+        if (prob < SCORE_THRESHOLD) continue;
+
+        const auto& anc = anchors_[i];
+        size_t loc_idx = i * 14;
+
+        float dx = (static_cast<float>(loc_data[loc_idx + 0]) - loc_zp) * loc_scale;
+        float dy = (static_cast<float>(loc_data[loc_idx + 1]) - loc_zp) * loc_scale;
+        float dw = (static_cast<float>(loc_data[loc_idx + 2]) - loc_zp) * loc_scale;
+        float dh = (static_cast<float>(loc_data[loc_idx + 3]) - loc_zp) * loc_scale;
+
+        // BlazeFace center/scale regression mapping
+        float cx = (dx / 128.0f) * anc.w + anc.x_center;
+        float cy = (dy / 128.0f) * anc.h + anc.y_center;
+        float w  = (dw / 128.0f) * anc.w;
+        float h  = (dh / 128.0f) * anc.h;
+
+        DetectionBox box;
+        box.score = prob;
+        box.xmin = std::max(0.0f, std::min(1.0f, cx - w * 0.5f));
+        box.ymin = std::max(0.0f, std::min(1.0f, cy - h * 0.5f));
+        box.xmax = std::max(0.0f, std::min(1.0f, cx + w * 0.5f));
+        box.ymax = std::max(0.0f, std::min(1.0f, cy + h * 0.5f));
+
+        if (box.xmax > box.xmin && box.ymax > box.ymin) {
+            candidates.push_back(box);
         }
     }
 
-    // When confidence threshold is met, populate normalized box
-    if (max_score >= 0.70f) {
-        DetectionBox b;
-        b.score = max_score;
-        b.xmin = 0.30f;
-        b.ymin = 0.20f;
-        b.xmax = 0.70f;
-        b.ymax = 0.75f;
-        boxes.push_back(b);
+    if (candidates.empty()) return;
+
+    // Sort by confidence descending
+    std::sort(candidates.begin(), candidates.end(), [](const DetectionBox& a, const DetectionBox& b) {
+        return a.score > b.score;
+    });
+
+    // Non-Maximum Suppression (NMS)
+    for (const auto& cand : candidates) {
+        bool keep = true;
+        for (const auto& chosen : boxes) {
+            float x1 = std::max(cand.xmin, chosen.xmin);
+            float y1 = std::max(cand.ymin, chosen.ymin);
+            float x2 = std::min(cand.xmax, chosen.xmax);
+            float y2 = std::min(cand.ymax, chosen.ymax);
+
+            float inter_w = std::max(0.0f, x2 - x1);
+            float inter_h = std::max(0.0f, y2 - y1);
+            float inter_area = inter_w * inter_h;
+
+            float area_cand = (cand.xmax - cand.xmin) * (cand.ymax - cand.ymin);
+            float area_chosen = (chosen.xmax - chosen.xmin) * (chosen.ymax - chosen.ymin);
+            float union_area = area_cand + area_chosen - inter_area;
+
+            if (union_area > 0.0f && (inter_area / union_area) >= IOU_THRESHOLD) {
+                keep = false;
+                break;
+            }
+        }
+        if (keep) {
+            boxes.push_back(cand);
+            if (boxes.size() >= 4) break; // Keep at most top 4 detected faces
+        }
     }
 }
 
