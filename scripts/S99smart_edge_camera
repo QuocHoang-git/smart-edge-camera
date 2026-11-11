@@ -14,6 +14,20 @@ MODEL_PATH="/userdata/face_detection_rv1106.rknn"
 
 start() {
     printf "Starting %s: " "$NAME"
+    
+    # Wait for Rockchip ISP 3A daemon (rkaiq_3A_server) to finish sensor calibration
+    cnt=0
+    while [ $cnt -lt 30 ]; do
+        if pidof rkaiq_3A_server >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.2
+        cnt=$((cnt + 1))
+    done
+    
+    # Give ISP 3A hardware algorithms (AE/AWB) 1.5 seconds to establish sensor gain/exposure
+    sleep 1.5
+
     start-stop-daemon -S -b -m -p /var/run/$NAME.pid -x $DAEMON -- $VIDEO_DEV $MODEL_PATH
     echo "OK"
 }
