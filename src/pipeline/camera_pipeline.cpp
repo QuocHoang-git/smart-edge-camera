@@ -371,7 +371,7 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
     float score_scale = score_attr->scale;
     int32_t score_zp = score_attr->zp;
 
-    constexpr float SCORE_THRESHOLD = 0.50f;
+    constexpr float SCORE_THRESHOLD = 0.30f;
     constexpr float IOU_THRESHOLD = 0.30f;
 
     std::vector<DetectionBox> candidates;
@@ -383,12 +383,21 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
         if (prob < SCORE_THRESHOLD) continue;
 
         const auto& anc = anchors_[i];
-        size_t loc_idx = i * 14;
 
-        float dx = (static_cast<float>(loc_data[loc_idx + 0]) - loc_zp) * loc_scale;
-        float dy = (static_cast<float>(loc_data[loc_idx + 1]) - loc_zp) * loc_scale;
-        float dw = (static_cast<float>(loc_data[loc_idx + 2]) - loc_zp) * loc_scale;
-        float dh = (static_cast<float>(loc_data[loc_idx + 3]) - loc_zp) * loc_scale;
+        // In RV1103 NC1HWC2 hardware layout for [1, 896, 14, 1]:
+        // Channel block c1 = i / 16, c2 = i % 16, height coordinate = j (0..13)
+        // Memory offset = ((c1 * 14) + j) * 16 + c2
+        size_t c1 = i / 16;
+        size_t c2 = i % 16;
+        auto get_loc = [&](size_t j) -> float {
+            size_t offset = (c1 * 14 + j) * 16 + c2;
+            return (static_cast<float>(loc_data[offset]) - loc_zp) * loc_scale;
+        };
+
+        float dx = get_loc(0);
+        float dy = get_loc(1);
+        float dw = get_loc(2);
+        float dh = get_loc(3);
 
         // BlazeFace center/scale regression mapping
         float cx = (dx / 128.0f) * anc.w + anc.x_center;

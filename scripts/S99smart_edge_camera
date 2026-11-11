@@ -12,6 +12,8 @@ MODEL_PATH="/userdata/face_detection_rv1106.rknn"
 [ -x "$DAEMON" ] || exit 0
 [ -f "$MODEL_PATH" ] || exit 0
 
+LOG_FILE="/var/log/smart_edge_camera.log"
+
 start() {
     printf "Starting %s: " "$NAME"
     
@@ -28,7 +30,13 @@ start() {
     # Give ISP 3A hardware algorithms (AE/AWB) 1.5 seconds to establish sensor gain/exposure
     sleep 1.5
 
-    start-stop-daemon -S -b -m -p /var/run/$NAME.pid -x $DAEMON -- $VIDEO_DEV $MODEL_PATH
+    # Rotate log file if larger than 2MB
+    if [ -f "$LOG_FILE" ] && [ $(wc -c < "$LOG_FILE") -gt 2097152 ]; then
+        mv -f "$LOG_FILE" "$LOG_FILE.old"
+    fi
+
+    # Start daemon redirecting stdout and stderr to LOG_FILE
+    start-stop-daemon -S -b -m -p /var/run/$NAME.pid -x /bin/sh -- -c "exec $DAEMON $VIDEO_DEV $MODEL_PATH >> $LOG_FILE 2>&1"
     echo "OK"
 }
 
