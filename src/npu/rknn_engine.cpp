@@ -98,6 +98,9 @@ bool RknnEngine::init(const std::string& model_path) {
     // Allocate and attach memory for all output tensors
     output_mems_.resize(io_num_.n_output, nullptr);
     for (uint32_t i = 0; i < io_num_.n_output; ++i) {
+        output_attrs_[i].pass_through = 1;
+        output_attrs_[i].fmt = RKNN_TENSOR_NC1HWC2; // RV1103 native hardware layout
+
         output_mems_[i] = rknn_create_mem(ctx_, output_attrs_[i].size);
         if (!output_mems_[i]) {
             std::cerr << "[RKNN ERROR] Failed to create mem for output tensor " << i << "\n";
