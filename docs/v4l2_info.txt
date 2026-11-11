@@ -1,0 +1,328 @@
+[root@luckfox userdata]# v4l2-ctl --list-devices
+rkisp-statistics (platform: rkisp):
+        /dev/video19
+        /dev/video20
+
+rkcif-mipi-lvds (platform:rkcif):
+        /dev/media0
+
+rkcif (platform:rkcif-mipi-lvds):
+        /dev/video0
+        /dev/video1
+        /dev/video2
+        /dev/video3
+        /dev/video4
+        /dev/video5
+        /dev/video6
+        /dev/video7
+        /dev/video8
+        /dev/video9
+        /dev/video10
+
+rkisp_mainpath (platform:rkisp-vir0):
+        /dev/video11
+        /dev/video12
+        /dev/video13
+        /dev/video14
+        /dev/video15
+        /dev/video16
+        /dev/video17
+        /dev/video18
+        /dev/media1
+
+[root@luckfox userdata]# for i in /dev/video*; do
+>     echo "=== $i ==="
+>     v4l2-ctl -d $i -D | grep -E "Driver name|Card type|Capabilities" -A 1
+> done
+=== /dev/video0 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video1 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video10 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video11 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp_mainpath
+        Bus info         : platform:rkisp-vir0
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video12 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp_selfpath
+        Bus info         : platform:rkisp-vir0
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video13 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp_bypasspath
+        Bus info         : platform:rkisp-vir0
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video14 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp_mainpath_4x4sampling
+        Bus info         : platform:rkisp-vir0
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video15 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp_bypasspath_4x4sampling
+        Bus info         : platform:rkisp-vir0
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video16 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp_lumapath
+        Bus info         : platform:rkisp-vir0
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video17 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp_rawrd0_m
+        Bus info         : platform:rkisp-vir0
+--
+        Capabilities     : 0x84202000
+                Video Output Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04202000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video18 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp_rawrd2_s
+        Bus info         : platform:rkisp-vir0
+--
+        Capabilities     : 0x84202000
+                Video Output Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04202000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video19 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp-statistics
+        Bus info         : platform: rkisp
+--
+        Capabilities     : 0x84a00000
+                Metadata Capture
+--
+                Device Capabilities
+        Device Caps      : 0x04a00000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video2 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video20 ===
+        Driver name      : rkisp_v7
+        Card type        : rkisp-input-params
+        Bus info         : platform: rkisp
+--
+        Capabilities     : 0x8c200000
+                Metadata Output
+--
+                Device Capabilities
+        Device Caps      : 0x0c200000
+--
+        Driver name      : rkisp-vir0
+        Model            : rkisp0
+=== /dev/video3 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video4 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video5 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video6 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video7 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video8 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+=== /dev/video9 ===
+        Driver name      : rkcif
+        Card type        : rkcif
+        Bus info         : platform:rkcif-mipi-lvds
+--
+        Capabilities     : 0x84201000
+                Video Capture Multiplanar
+--
+                Device Capabilities
+        Device Caps      : 0x04201000
+--
+        Driver name      : rkcif
+        Model            : rkcif-mipi-lvds
+[root@luckfox userdata]# 
+[root@luckfox userdata]# v4l2-ctl -d /dev/video11 --list-formats-ext
+ioctl: VIDIOC_ENUM_FMT
+        Type: Video Capture Multiplanar
+
+        [0]: 'UYVY' (UYVY 4:2:2)
+                Size: Stepwise 32x32 - 2304x1296 with step 8/8
+        [1]: 'NV16' (Y/CbCr 4:2:2)
+                Size: Stepwise 32x32 - 2304x1296 with step 8/8
+        [2]: 'NV61' (Y/CrCb 4:2:2)
+                Size: Stepwise 32x32 - 2304x1296 with step 8/8
+        [3]: 'NV21' (Y/CrCb 4:2:0)
+                Size: Stepwise 32x32 - 2304x1296 with step 8/8
+        [4]: 'NV12' (Y/CbCr 4:2:0)
+                Size: Stepwise 32x32 - 2304x1296 with step 8/8
+        [5]: 'NM21' (Y/CrCb 4:2:0 (N-C))
+                Size: Stepwise 32x32 - 2304x1296 with step 8/8
+        [6]: 'NM12' (Y/CbCr 4:2:0 (N-C))
+                Size: Stepwise 32x32 - 2304x1296 with step 8/8

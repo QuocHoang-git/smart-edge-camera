@@ -1,64 +1,92 @@
 /**
  * @file main.cpp
- * @brief Phase 1 PoC: Target architecture, ABI validation, and runtime sanity check.
- * 
- * This test binary verifies cross-compilation correctness for Rockchip RV1103 (ARM Cortex-A7),
- * checks system page size, memory layout structures, and hardware floating-point capabilities.
+ * @brief Phase 2 PoC: V4L2 streaming capture, frame latency, and raw dump verification.
  */
 
+#include "camera/v4l2_camera.hpp"
+
 #include <iostream>
-#include <iomanip>
-#include <unistd.h>
-#include <sys/sysinfo.h>
+#include <fstream>
+#include <chrono>
 
-void print_system_architecture() {
-    std::cout << "========================================================\n";
-    std::cout << "  Smart Edge Camera - Phase 1 Target System Validation   \n";
-    std::cout << "========================================================\n";
-
-#if defined(__arm__)
-    std::cout << "[TARGET ARCH] Architecture       : ARM 32-bit\n";
-#else
-    std::cout << "[TARGET ARCH] Architecture       : NON-ARM (Unexpected!)\n";
-#endif
-
-#if defined(__ARM_ARCH_7A__)
-    std::cout << "[TARGET ARCH] Core Profile       : ARMv7-A (Cortex-A7 Compatible)\n";
-#endif
-
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
-    std::cout << "[HARDWARE ACC] SIMD Engine       : ARM NEON Supported\n";
-#else
-    std::cout << "[HARDWARE ACC] SIMD Engine       : ARM NEON Not Enabled\n";
-#endif
-
-#if defined(__ARM_PCS_VFP)
-    std::cout << "[HARDWARE ACC] Floating Point ABI: Hard Float (VFPv4 / VFP-D16)\n";
-#else
-    std::cout << "[HARDWARE ACC] Floating Point ABI: Soft Float / Softfp\n";
-#endif
-
-    std::cout << "\n--- Memory & Data Model Inspection ---\n";
-    std::cout << "Pointer Size                     : " << sizeof(void*) * 8 << "-bit\n";
-    std::cout << "size_t Size                      : " << sizeof(size_t) * 8 << "-bit\n";
-    std::cout << "System Page Size                 : " << sysconf(_SC_PAGESIZE) << " bytes\n";
-
-    struct sysinfo s_info;
-    if (sysinfo(&s_info) == 0) {
-        constexpr unsigned long MB = 1024 * 1024;
-        std::cout << "\n--- Linux Kernel Memory Statistics ---\n";
-        std::cout << "Total Physical RAM Reported      : " << (s_info.totalram * static_cast<unsigned long>(s_info.mem_unit)) / MB << " MB\n";
-        std::cout << "Free RAM Available               : " << (s_info.freeram * static_cast<unsigned long>(s_info.mem_unit)) / MB << " MB\n";
-        std::cout << "Shared RAM (Buffers/CMA etc.)    : " << (s_info.sharedram * static_cast<unsigned long>(s_info.mem_unit)) / MB << " MB\n";
-        std::cout << "Buffer RAM                       : " << (s_info.bufferram * static_cast<unsigned long>(s_info.mem_unit)) / MB << " MB\n";
-    } else {
-        std::cerr << "[ERROR] Unable to retrieve sysinfo details.\n";
+int main(int argc, char* argv[]) {
+    std::string dev_node = "/dev/video11";
+    if (argc > 1) {
+        dev_node = argv[1];
     }
 
     std::cout << "========================================================\n";
-}
+    std::cout << "  Smart Edge Camera - Phase 2 V4L2 Hardware Capture     \n";
+    std::cout << "  Target Device Node: " << dev_node << "\n";
+    std::cout << "========================================================\n";
 
-int main() {
-    print_system_architecture();
+    constexpr uint32_t WIDTH = 1920;
+    constexpr uint32_t HEIGHT = 1080;
+    constexpr uint32_t BUFFER_COUNT = 3;
+
+    edge_camera::V4L2Camera camera(dev_node);
+
+    std::cout << "[PHASE 2] Initializing camera: " << WIDTH << "x" << HEIGHT << " (NV12)...\n";
+    if (!camera.init(WIDTH, HEIGHT, V4L2_PIX_FMT_NV12, BUFFER_COUNT)) {
+        std::cerr << "[ERROR] Camera initialization failed!\n";
+        return 1;
+    }
+
+    std::cout << "[PHASE 2] Starting video stream...\n";
+    if (!camera.start_stream()) {
+        std::cerr << "[ERROR] Failed to start video stream!\n";
+        return 1;
+    }
+
+    constexpr int CAPTURE_COUNT = 15;
+    std::cout << "[PHASE 2] Capturing " << CAPTURE_COUNT << " test frames...\n";
+
+    bool frame_dumped = false;
+    auto last_tp = std::chrono::steady_clock::now();
+
+    for (int i = 0; i < CAPTURE_COUNT; ++i) {
+        edge_camera::FrameBuffer buffer;
+        if (!camera.dequeue_frame(buffer, 3000)) {
+            std::cerr << "[ERROR] Failed to dequeue frame " << i << "\n";
+            continue;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        double elapsed_ms = std::chrono::duration<double, std::milli>(now - last_tp).count();
+        last_tp = now;
+
+        std::cout << " -> Frame #" << i 
+                  << " [Index: " << buffer.index 
+                  << ", Size: " << buffer.length << " bytes"
+                  << ", Interval: " << elapsed_ms << " ms"
+                  << "]\n";
+
+        // Dump 1st frame to flash for analysis
+        if (!frame_dumped && buffer.start != nullptr) {
+            const std::string dump_path = "/userdata/test_frame_1920x1080.nv12";
+            std::ofstream out(dump_path, std::ios::binary);
+            if (out.is_open()) {
+                out.write(static_cast<const char*>(buffer.start), static_cast<std::streamsize>(buffer.length));
+                out.close();
+                std::cout << "[SUCCESS] Saved first frame raw data to: " << dump_path << "\n";
+            } else {
+                std::cerr << "[WARNING] Failed to open " << dump_path << " for writing.\n";
+            }
+            frame_dumped = true;
+        }
+
+        // Must re-enqueue the buffer back to kernel
+        if (!camera.enqueue_frame(buffer)) {
+            std::cerr << "[ERROR] Failed to enqueue buffer " << buffer.index << "\n";
+        }
+    }
+
+    std::cout << "[PHASE 2] Stopping stream...\n";
+    camera.stop_stream();
+
+    std::cout << "========================================================\n";
+    std::cout << "  Phase 2 Test Completed Successfully!                  \n";
+    std::cout << "========================================================\n";
+
     return 0;
 }
