@@ -1,6 +1,6 @@
 /**
  * @file rknn_engine.hpp
- * @brief RAII C++ wrapper for Rockchip NPU (RKNN Micro Runtime).
+ * @brief Zero-Copy RAII C++ wrapper for Rockchip NPU (RKNN Micro Runtime).
  */
 
 #pragma once
@@ -42,13 +42,20 @@ public:
     bool init(const std::string& model_path);
 
     /**
-     * @brief Run synchronous inference on input RGB buffer.
-     * @param input_data Pointer to RGB888 image buffer (matching model input shape).
-     * @param input_size Buffer size in bytes.
+     * @brief Bind external DMA-BUF memory directly to NPU input tensor (Zero-Copy).
+     * @param dma_fd DMA-BUF file descriptor of input buffer.
+     * @param va Virtual address of input buffer.
+     * @param size Size in bytes.
+     * @return true on binding success.
+     */
+    bool bind_input_dma_buffer(int dma_fd, void* va, size_t size);
+
+    /**
+     * @brief Run synchronous inference on hardware NPU.
      * @param[out] inference_time_ms Execution time on NPU hardware.
      * @return true on inference success.
      */
-    bool run_inference(const void* input_data, size_t input_size, double& inference_time_ms);
+    bool run(double& inference_time_ms);
 
     void destroy();
 
@@ -62,7 +69,11 @@ private:
     rknn_context ctx_{0};
     rknn_input_output_num io_num_{};
     NpuTensorAttr input_attr_{};
+    rknn_tensor_attr input_raw_attr_{};
     std::vector<rknn_tensor_attr> output_attrs_{};
+
+    rknn_tensor_mem* input_mem_{nullptr};
+    std::vector<rknn_tensor_mem*> output_mems_{};
 };
 
 } // namespace edge_camera

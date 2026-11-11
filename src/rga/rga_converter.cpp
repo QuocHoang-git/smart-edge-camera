@@ -6,7 +6,6 @@
 #include "rga/rga_converter.hpp"
 
 #include <iostream>
-#include <rga/rga.h>
 #include <rga/im2d.h>
 #include <rga/RgaApi.h>
 
@@ -35,7 +34,8 @@ bool RgaConverter::init() {
 
 bool RgaConverter::blit_dma_to_dma(
     int src_fd, size_t src_size, uint32_t src_w, uint32_t src_h,
-    int dst_fd, size_t dst_size, uint32_t dst_w, uint32_t dst_h) 
+    int dst_fd, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
+    int dst_format) 
 {
     if (!is_initialized_) {
         std::cerr << "[RGA ERROR] RGA converter not initialized!\n";
@@ -61,7 +61,7 @@ bool RgaConverter::blit_dma_to_dma(
         return false;
     }
 
-    // Wrap both using hardware handles (Rule: both must use handles!)
+    // Wrap both using hardware handles
     rga_buffer_t src = wrapbuffer_handle(
         src_handle,
         static_cast<int>(src_w),
@@ -73,10 +73,10 @@ bool RgaConverter::blit_dma_to_dma(
         dst_handle,
         static_cast<int>(dst_w),
         static_cast<int>(dst_h),
-        RK_FORMAT_RGB_888
+        dst_format
     );
 
-    // Hardware downscale + color conversion (sync=1 wait until complete)
+    // Hardware downscale (sync=1 wait until complete)
     IM_STATUS ret = imresize_t(src, dst, 0, 0, 0, 1);
 
     // Clean up handles

@@ -1,6 +1,6 @@
 /**
  * @file rknn_engine.cpp
- * @brief Implementation of Rockchip NPU runtime wrapper.
+ * @brief Implementation of Zero-Copy Rockchip NPU runtime wrapper.
  */
 
 #include "npu/rknn_engine.hpp"
@@ -20,8 +20,12 @@ RknnEngine::RknnEngine(RknnEngine&& other) noexcept
     : ctx_(other.ctx_),
       io_num_(other.io_num_),
       input_attr_(other.input_attr_),
-      output_attrs_(std::move(other.output_attrs_)) {
+      input_raw_attr_(other.input_raw_attr_),
+      output_attrs_(std::move(other.output_attrs_)),
+      input_mem_(other.input_mem_),
+      output_mems_(std::move(other.output_mems_)) {
     other.ctx_ = 0;
+    other.input_mem_ = nullptr;
 }
 
 RknnEngine& RknnEngine::operator=(RknnEngine&& other) noexcept {
@@ -30,15 +34,30 @@ RknnEngine& RknnEngine::operator=(RknnEngine&& other) noexcept {
         ctx_ = other.ctx_;
         io_num_ = other.io_num_;
         input_attr_ = other.input_attr_;
+        input_raw_attr_ = other.input_raw_attr_;
         output_attrs_ = std::move(other.output_attrs_);
+        input_mem_ = other.input_mem_;
+        output_mems_ = std::move(other.output_mems_);
 
         other.ctx_ = 0;
+        other.input_mem_ = nullptr;
     }
     return *this;
 }
 
 void RknnEngine::destroy() {
     if (ctx_ != 0) {
+        if (input_mem_) {
+            rknn_destroy_mem(ctx_, input_mem_);
+            input_mem_ = nullptr;
+        }
+        for (auto* out_mem : output_mems_) {
+            if (out_mem) {
+                rknn_destroy_mem(ctx_, out_mem);
+            }
+        }
+        output_mems_.clear();
+
         rknn_destroy(ctx_);
         ctx_ = 0;
     }
@@ -47,7 +66,6 @@ void RknnEngine::destroy() {
 bool RknnEngine::init(const std::string& model_path) {
     destroy();
 
-    // Read model binary from storage
     std::ifstream file(model_path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         std::cerr << "[RKNN ERROR] Failed to open model file: " << model_path << "\n";
@@ -66,7 +84,6 @@ bool RknnEngine::init(const std::string& model_path) {
 
     std::cout << "[RKNN INFO] Loaded model binary: " << file_size << " bytes.\n";
 
-    // Initialize RKNN runtime context
     int ret = rknn_init(&ctx_, model_data.data(), static_cast<uint32_t>(file_size), 0, nullptr);
     if (ret < 0) {
         std::cerr << "[RKNN ERROR] rknn_init failed with code: " << ret << "\n";
@@ -78,12 +95,29 @@ bool RknnEngine::init(const std::string& model_path) {
         return false;
     }
 
-    std::cout << "[RKNN INFO] RKNN context initialized on NPU successfully.\n";
+    // Allocate and attach memory for all output tensors
+    output_mems_.resize(io_num_.n_output, nullptr);
+    for (uint32_t i = 0; i < io_num_.n_output; ++i) {
+        output_mems_[i] = rknn_create_mem(ctx_, output_attrs_[i].size);
+        if (!output_mems_[i]) {
+            std::cerr << "[RKNN ERROR] Failed to create mem for output tensor " << i << "\n";
+            destroy();
+            return false;
+        }
+
+        ret = rknn_set_io_mem(ctx_, output_mems_[i], &output_attrs_[i]);
+        if (ret < 0) {
+            std::cerr << "[RKNN ERROR] rknn_set_io_mem failed for output tensor " << i << ": " << ret << "\n";
+            destroy();
+            return false;
+        }
+    }
+
+    std::cout << "[RKNN INFO] RKNN context and output tensor memory initialized successfully.\n";
     return true;
 }
 
 bool RknnEngine::query_model_attributes() {
-    // Query I/O Counts
     std::memset(&io_num_, 0, sizeof(io_num_));
     int ret = rknn_query(ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num_, sizeof(io_num_));
     if (ret < 0) {
@@ -100,24 +134,26 @@ bool RknnEngine::query_model_attributes() {
     }
 
     // Query Input Attributes
-    rknn_tensor_attr in_attr;
-    std::memset(&in_attr, 0, sizeof(in_attr));
-    in_attr.index = 0;
-    ret = rknn_query(ctx_, RKNN_QUERY_INPUT_ATTR, &in_attr, sizeof(in_attr));
+    std::memset(&input_raw_attr_, 0, sizeof(input_raw_attr_));
+    input_raw_attr_.index = 0;
+    ret = rknn_query(ctx_, RKNN_QUERY_INPUT_ATTR, &input_raw_attr_, sizeof(input_raw_attr_));
     if (ret < 0) {
         std::cerr << "[RKNN ERROR] Query input attr failed: " << ret << "\n";
         return false;
     }
 
-    input_attr_.width = in_attr.dims[2];
-    input_attr_.height = in_attr.dims[1];
-    input_attr_.channels = in_attr.dims[3];
-    input_attr_.size = in_attr.size;
-    input_attr_.format = in_attr.fmt;
-    input_attr_.type = in_attr.type;
+    input_attr_.width = input_raw_attr_.dims[2];
+    input_attr_.height = input_raw_attr_.dims[1];
+    input_attr_.channels = input_raw_attr_.dims[3];
+    input_attr_.size = input_raw_attr_.size;
+    input_attr_.format = input_raw_attr_.fmt;
+    input_attr_.type = input_raw_attr_.type;
+
+    // Use pass_through = 1 so NPU accepts raw DMA buffer without conversion
+    input_raw_attr_.pass_through = 1;
 
     std::cout << "[RKNN INFO] Input Tensor [0]: " 
-              << in_attr.name << " (" 
+              << input_raw_attr_.name << " (" 
               << input_attr_.width << "x" << input_attr_.height << "x" << input_attr_.channels 
               << ", size=" << input_attr_.size << " bytes)\n";
 
@@ -138,28 +174,48 @@ bool RknnEngine::query_model_attributes() {
     return true;
 }
 
-bool RknnEngine::run_inference(const void* input_data, size_t input_size, double& inference_time_ms) {
-    if (ctx_ == 0 || !input_data) {
+bool RknnEngine::bind_input_dma_buffer(int dma_fd, void* va, size_t size) {
+    if (ctx_ == 0 || dma_fd < 0 || !va) {
         return false;
     }
 
-    rknn_input input;
-    std::memset(&input, 0, sizeof(input));
-    input.index = 0;
-    input.type = input_attr_.type;
-    input.size = static_cast<uint32_t>(input_size);
-    input.fmt = input_attr_.format;
-    input.buf = const_cast<void*>(input_data);
+    if (input_mem_) {
+        rknn_destroy_mem(ctx_, input_mem_);
+        input_mem_ = nullptr;
+    }
 
-    int ret = rknn_inputs_set(ctx_, 1, &input);
+    // Zero-Copy binding: Map DMA-BUF descriptor directly into RKNN NPU input
+    input_mem_ = rknn_create_mem_from_fd(
+        ctx_,
+        dma_fd,
+        va,
+        static_cast<uint32_t>(size),
+        0
+    );
+
+    if (!input_mem_) {
+        std::cerr << "[RKNN ERROR] rknn_create_mem_from_fd failed for dma_fd=" << dma_fd << "\n";
+        return false;
+    }
+
+    int ret = rknn_set_io_mem(ctx_, input_mem_, &input_raw_attr_);
     if (ret < 0) {
-        std::cerr << "[RKNN ERROR] rknn_inputs_set failed: " << ret << "\n";
+        std::cerr << "[RKNN ERROR] rknn_set_io_mem for input failed: " << ret << "\n";
+        return false;
+    }
+
+    std::cout << "[RKNN INFO] Bound input DMA buffer (fd=" << dma_fd << ") to NPU input tensor.\n";
+    return true;
+}
+
+bool RknnEngine::run(double& inference_time_ms) {
+    if (ctx_ == 0) {
         return false;
     }
 
     auto t0 = std::chrono::steady_clock::now();
 
-    ret = rknn_run(ctx_, nullptr);
+    int ret = rknn_run(ctx_, nullptr);
 
     auto t1 = std::chrono::steady_clock::now();
     inference_time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();

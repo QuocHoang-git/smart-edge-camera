@@ -1,6 +1,6 @@
 /**
  * @file main.cpp
- * @brief Phase 4 PoC: Complete Hardware Pipeline (V4L2 1080p -> RGA Downscale -> NPU Face Detection).
+ * @brief Phase 4 PoC: Complete Hardware Pipeline (V4L2 1080p -> RGA Downscale -> NPU BlazeFace).
  */
 
 #include "camera/v4l2_camera.hpp"
@@ -13,7 +13,7 @@
 
 int main(int argc, char* argv[]) {
     std::string dev_node = "/dev/video11";
-    std::string model_path = "/userdata/face_detection_rv1106.rknn";
+    std::string model_path = "/tmp/face_detection_rv1106.rknn";
 
     if (argc > 1) dev_node = argv[1];
     if (argc > 2) model_path = argv[2];
@@ -37,10 +37,15 @@ int main(int argc, char* argv[]) {
     const auto& npu_input = npu.input_attr();
     uint32_t sub_w = npu_input.width;
     uint32_t sub_h = npu_input.height;
+    uint32_t sub_c = npu_input.channels;
     size_t sub_size = npu_input.size;
 
+    int dst_rga_format = (sub_c == 1) ? RK_FORMAT_YCbCr_400 : RK_FORMAT_RGB_888;
+
     std::cout << "[INIT] Dynamic Pipeline Linking: RGA Sub-Stream matching NPU Input ("
-              << sub_w << "x" << sub_h << ", " << sub_size << " bytes)...\n";
+              << sub_w << "x" << sub_h << "x" << sub_c 
+              << ", Format: " << (sub_c == 1 ? "YCbCr_400 (Gray8)" : "RGB888")
+              << ", " << sub_size << " bytes)...\n";
 
     // Step 2: Allocate Physically Contiguous Memory for Sub-Stream via Linux DMA-Heap
     edge_camera::DmaBuffer sub_dma_buffer;
@@ -50,7 +55,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Step 3: Initialize RGA 2D Hardware Accelerator
+    // Step 3: Zero-Copy Binding of DMA Buffer to NPU Input Tensor
+    if (!npu.bind_input_dma_buffer(sub_dma_buffer.fd(), sub_dma_buffer.data(), sub_size)) {
+        std::cerr << "[ERROR] Failed to bind DMA buffer to NPU input tensor!\n";
+        return 1;
+    }
+
+    // Step 4: Initialize RGA 2D Hardware Accelerator
     edge_camera::RgaConverter rga;
     std::cout << "[INIT] Initializing RGA 2D Hardware Accelerator...\n";
     if (!rga.init()) {
@@ -58,7 +69,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Step 4: Initialize V4L2 Camera (1080p NV12)
+    // Step 5: Initialize V4L2 Camera (1080p NV12)
     edge_camera::V4L2Camera camera(dev_node);
     std::cout << "[INIT] Initializing V4L2 Camera (" << MAIN_W << "x" << MAIN_H << " NV12)...\n";
     if (!camera.init(MAIN_W, MAIN_H, V4L2_PIX_FMT_NV12, 4)) {
@@ -71,7 +82,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Step 5: Warm-up ISP pipeline (10 frames)
+    // Step 6: Warm-up ISP pipeline (10 frames)
     std::cout << "[INIT] Warming up ISP pipeline (10 frames)...\n";
     for (int i = 0; i < 10; ++i) {
         edge_camera::FrameBuffer warmup_frame;
@@ -95,11 +106,12 @@ int main(int argc, char* argv[]) {
 
         auto frame_start_tp = std::chrono::steady_clock::now();
 
-        // Stage A: Hardware RGA Scaling (1080p NV12 -> NPU Input Size RGB888)
+        // Stage A: Hardware RGA Scaling (1080p NV12 -> 128x128 Gray8 via Zero-Copy DMA)
         auto t_rga_start = std::chrono::steady_clock::now();
         bool rga_ok = rga.blit_dma_to_dma(
             main_frame.dma_fd, main_frame.length, MAIN_W, MAIN_H,
-            sub_dma_buffer.fd(), sub_size, sub_w, sub_h
+            sub_dma_buffer.fd(), sub_size, sub_w, sub_h,
+            dst_rga_format
         );
         auto t_rga_end = std::chrono::steady_clock::now();
         double rga_ms = std::chrono::duration<double, std::milli>(t_rga_end - t_rga_start).count();
@@ -112,9 +124,9 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // Stage B: Hardware NPU Inference (Synchronous execution on RV1103 NPU)
+        // Stage B: Hardware NPU Zero-Copy Inference
         double npu_ms = 0.0;
-        bool npu_ok = npu.run_inference(sub_dma_buffer.data(), sub_size, npu_ms);
+        bool npu_ok = npu.run(npu_ms);
 
         auto frame_end_tp = std::chrono::steady_clock::now();
         double total_pipeline_ms = std::chrono::duration<double, std::milli>(frame_end_tp - frame_start_tp).count();
@@ -128,8 +140,8 @@ int main(int argc, char* argv[]) {
 
             std::cout << " -> Frame #" << i 
                       << " | RGA Blit: " << rga_ms << " ms"
-                      << " | NPU Inference: " << npu_ms << " ms"
-                      << " | Total Vision Latency: " << total_pipeline_ms << " ms\n";
+                      << " | NPU BlazeFace: " << npu_ms << " ms"
+                      << " | Total Hardware Latency: " << total_pipeline_ms << " ms\n";
         }
     }
 
