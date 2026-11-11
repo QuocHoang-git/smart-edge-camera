@@ -179,13 +179,17 @@ static std::string extract_cseq(const std::string& req) {
     return req.substr(pos + 6, end - (pos + 6));
 }
 
-static std::string extract_stream_path(const std::string& req) {
+static std::string extract_url(const std::string& req) {
     size_t method_end = req.find(' ');
-    if (method_end == std::string::npos) return "/live/main";
+    if (method_end == std::string::npos) return "";
     size_t url_end = req.find(' ', method_end + 1);
-    if (url_end == std::string::npos) return "/live/main";
+    if (url_end == std::string::npos) return "";
+    return req.substr(method_end + 1, url_end - (method_end + 1));
+}
 
-    std::string url = req.substr(method_end + 1, url_end - (method_end + 1));
+static std::string extract_stream_path(const std::string& req) {
+    std::string url = extract_url(req);
+    if (url.empty()) return "/live/main";
     size_t host_pos = url.find("://");
     if (host_pos == std::string::npos) return url;
     size_t path_pos = url.find('/', host_pos + 3);
@@ -202,6 +206,8 @@ static std::string extract_stream_path(const std::string& req) {
 void RtspServer::process_rtsp_request(int client_fd, const std::string& request) {
     std::string cseq = extract_cseq(request);
     std::string stream_path = extract_stream_path(request);
+
+    std::cout << "[RTSP REQ fd=" << client_fd << "]\n" << request << "\n----------------" << std::endl;
 
     if (request.rfind("OPTIONS", 0) == 0) {
         std::ostringstream resp;
@@ -224,51 +230,48 @@ void RtspServer::process_rtsp_request(int client_fd, const std::string& request)
             << "a=control:track0\r\n";
         std::string sdp_str = sdp.str();
 
+        std::string req_url = extract_url(request);
+        if (!req_url.empty() && req_url.back() != '/') {
+            req_url += "/";
+        }
+
         std::ostringstream resp;
         resp << "RTSP/1.0 200 OK\r\n"
              << "CSeq: " << cseq << "\r\n"
              << "Content-Type: application/sdp\r\n"
-             << "Content-Base: rtsp://0.0.0.0:" << port_ << stream_path << "/\r\n"
+             << "Content-Base: " << req_url << "\r\n"
              << "Content-Length: " << sdp_str.length() << "\r\n\r\n"
              << sdp_str;
         std::string s = resp.str();
         send(client_fd, s.c_str(), s.length(), MSG_NOSIGNAL);
     }
     else if (request.rfind("SETUP", 0) == 0) {
+        // Check if client requested TCP interleaved transport
+        if (request.find("RTP/AVP/TCP") == std::string::npos && request.find("interleaved") == std::string::npos) {
+            // Client requested UDP (RTP/AVP). Because surveillance cameras are often behind NAT/port-forwarding,
+            // we reject UDP with 461 Unsupported Transport (RFC 2326 Section 12.39).
+            // This instructs VLC / FFmpeg to immediately fallback to RTP/AVP/TCP (Interleaved) over port 554.
+            std::cout << "[RTSP INFO] Client requested UDP transport. Rejecting with 461 to trigger TCP interleaved fallback.\n";
+            std::ostringstream resp;
+            resp << "RTSP/1.0 461 Unsupported Transport\r\n"
+                 << "CSeq: " << cseq << "\r\n"
+                 << "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n";
+            std::string s = resp.str();
+            send(client_fd, s.c_str(), s.length(), MSG_NOSIGNAL);
+            return;
+        }
+
         RtspClientSession session;
         session.socket_fd = client_fd;
         session.session_id = "12345678";
         session.stream_path = stream_path;
         session.state = SessionState::READY;
+        session.is_tcp_interleaved = true;
+        session.rtp_channel = 0;
+        session.rtcp_channel = 1;
 
         std::ostringstream transport_resp;
-
-        if (request.find("RTP/AVP/TCP") != std::string::npos || request.find("interleaved") != std::string::npos) {
-            session.is_tcp_interleaved = true;
-            session.rtp_channel = 0;
-            session.rtcp_channel = 1;
-            transport_resp << "RTP/AVP/TCP;unicast;interleaved=0-1";
-        } else {
-            session.is_tcp_interleaved = false;
-            size_t client_port_pos = request.find("client_port=");
-            if (client_port_pos != std::string::npos) {
-                int rtp_p = 0, rtcp_p = 0;
-                sscanf(request.c_str() + client_port_pos, "client_port=%d-%d", &rtp_p, &rtcp_p);
-                session.client_rtp_port = static_cast<uint16_t>(rtp_p);
-                session.client_rtcp_port = static_cast<uint16_t>(rtcp_p);
-
-                struct sockaddr_in sin{};
-                socklen_t len = sizeof(sin);
-                getpeername(client_fd, (struct sockaddr*)&sin, &len);
-
-                session.client_rtp_addr = sin;
-                session.client_rtp_addr.sin_port = htons(session.client_rtp_port);
-                session.server_rtp_fd = socket(AF_INET, SOCK_DGRAM, 0);
-            }
-            transport_resp << "RTP/AVP;unicast;client_port=" << session.client_rtp_port 
-                           << "-" << session.client_rtcp_port 
-                           << ";server_port=60000-60001";
-        }
+        transport_resp << "RTP/AVP/TCP;unicast;interleaved=0-1";
 
         {
             std::lock_guard<std::mutex> lock(sessions_mutex_);
@@ -294,12 +297,18 @@ void RtspServer::process_rtsp_request(int client_fd, const std::string& request)
             }
         }
 
+        std::string req_url = extract_url(request);
+        if (!req_url.empty() && req_url.find("/track") == std::string::npos) {
+            if (req_url.back() != '/') req_url += "/";
+            req_url += "track0";
+        }
+
         std::ostringstream resp;
         resp << "RTSP/1.0 200 OK\r\n"
              << "CSeq: " << cseq << "\r\n"
              << "Range: npt=0.000-\r\n"
              << "Session: 12345678\r\n"
-             << "RTP-Info: url=rtsp://0.0.0.0:" << port_ << stream_path << "/track0\r\n\r\n";
+             << "RTP-Info: url=" << req_url << "\r\n\r\n";
         std::string s = resp.str();
         send(client_fd, s.c_str(), s.length(), MSG_NOSIGNAL);
     }

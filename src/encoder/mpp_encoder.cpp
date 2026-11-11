@@ -150,6 +150,13 @@ bool MppEncoder::init() {
         return false;
     }
 
+    // Ensure SPS/PPS headers are prepended to EVERY IDR frame for instant RTSP/VLC sync
+    MppEncHeaderMode hdr_mode = MPP_ENC_HEADER_MODE_EACH_IDR;
+    ret = mpi_->control(ctx_, MPP_ENC_SET_HEADER_MODE, &hdr_mode);
+    if (ret != MPP_OK) {
+        std::cerr << "[MppEncoder] Warning: Failed to set MPP_ENC_HEADER_MODE_EACH_IDR (ret=" << ret << ")" << std::endl;
+    }
+
     initialized_ = true;
     std::cout << "[MppEncoder " << config_.width << "x" << config_.height 
               << "] MPP encoder ready for zero-copy DMA streaming (chan=" << attr.chan_id << ")." << std::endl;
