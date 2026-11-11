@@ -1,0 +1,57 @@
+#!/bin/sh
+#
+# Smart Edge Camera Service daemon
+# Auto-start on boot via SysVinit (/etc/init.d/S99smart_edge_camera)
+#
+
+DAEMON="/usr/bin/smart_edge_camera"
+NAME="smart_edge_camera"
+VIDEO_DEV="/dev/video11"
+MODEL_PATH="/userdata/face_detection_rv1106.rknn"
+
+[ -x "$DAEMON" ] || exit 0
+[ -f "$MODEL_PATH" ] || exit 0
+
+start() {
+    printf "Starting %s: " "$NAME"
+    start-stop-daemon -S -b -m -p /var/run/$NAME.pid -x $DAEMON -- $VIDEO_DEV $MODEL_PATH
+    echo "OK"
+}
+
+stop() {
+    printf "Stopping %s: " "$NAME"
+    start-stop-daemon -K -q -p /var/run/$NAME.pid || killall -9 $NAME 2>/dev/null
+    rm -f /var/run/$NAME.pid
+    echo "OK"
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    status)
+        if [ -f /var/run/$NAME.pid ] && kill -0 $(cat /var/run/$NAME.pid) 2>/dev/null; then
+            echo "$NAME is running (PID: $(cat /var/run/$NAME.pid))"
+        else
+            echo "$NAME is stopped"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

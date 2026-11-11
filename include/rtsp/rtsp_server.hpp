@@ -31,6 +31,7 @@ struct RtspClientSession {
     // UDP transport parameters
     struct sockaddr_in client_rtp_addr{};
     int server_rtp_fd{-1};
+    uint16_t server_rtp_port{60000};
     uint16_t client_rtp_port{0};
     uint16_t client_rtcp_port{0};
 

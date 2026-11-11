@@ -246,32 +246,82 @@ void RtspServer::process_rtsp_request(int client_fd, const std::string& request)
         send(client_fd, s.c_str(), s.length(), MSG_NOSIGNAL);
     }
     else if (request.rfind("SETUP", 0) == 0) {
-        // Check if client requested TCP interleaved transport
-        if (request.find("RTP/AVP/TCP") == std::string::npos && request.find("interleaved") == std::string::npos) {
-            // Client requested UDP (RTP/AVP). Because surveillance cameras are often behind NAT/port-forwarding,
-            // we reject UDP with 461 Unsupported Transport (RFC 2326 Section 12.39).
-            // This instructs VLC / FFmpeg to immediately fallback to RTP/AVP/TCP (Interleaved) over port 554.
-            std::cout << "[RTSP INFO] Client requested UDP transport. Rejecting with 461 to trigger TCP interleaved fallback.\n";
-            std::ostringstream resp;
-            resp << "RTSP/1.0 461 Unsupported Transport\r\n"
-                 << "CSeq: " << cseq << "\r\n"
-                 << "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n";
-            std::string s = resp.str();
-            send(client_fd, s.c_str(), s.length(), MSG_NOSIGNAL);
-            return;
-        }
-
         RtspClientSession session;
         session.socket_fd = client_fd;
         session.session_id = "12345678";
         session.stream_path = stream_path;
         session.state = SessionState::READY;
-        session.is_tcp_interleaved = true;
-        session.rtp_channel = 0;
-        session.rtcp_channel = 1;
 
         std::ostringstream transport_resp;
-        transport_resp << "RTP/AVP/TCP;unicast;interleaved=0-1";
+
+        // Check if client requested TCP interleaved transport
+        if (request.find("RTP/AVP/TCP") != std::string::npos || request.find("interleaved") != std::string::npos) {
+            session.is_tcp_interleaved = true;
+            session.rtp_channel = 0;
+            session.rtcp_channel = 1;
+            transport_resp << "RTP/AVP/TCP;unicast;interleaved=0-1";
+            std::cout << "[RTSP INFO] Client fd=" << client_fd << " negotiated TCP Interleaved transport\n";
+        } else {
+            // UDP unicast transport (RFC 2326 Section 12.39 & RFC 3550)
+            session.is_tcp_interleaved = false;
+            session.server_rtp_port = static_cast<uint16_t>(60000 + (client_fd % 100) * 2);
+
+            // Parse client_port=XXXX-YYYY or client_port=XXXX
+            uint16_t client_rtp_port = 0;
+            uint16_t client_rtcp_port = 0;
+            size_t cport_pos = request.find("client_port=");
+            if (cport_pos != std::string::npos) {
+                size_t start = cport_pos + 12;
+                size_t dash = request.find('-', start);
+                size_t semi = request.find_first_of(";\r\n", start);
+                if (dash != std::string::npos && dash < semi) {
+                    client_rtp_port = static_cast<uint16_t>(std::stoi(request.substr(start, dash - start)));
+                    client_rtcp_port = static_cast<uint16_t>(std::stoi(request.substr(dash + 1, semi - (dash + 1))));
+                } else if (semi != std::string::npos) {
+                    client_rtp_port = static_cast<uint16_t>(std::stoi(request.substr(start, semi - start)));
+                    client_rtcp_port = client_rtp_port + 1;
+                }
+            }
+
+            session.client_rtp_port = client_rtp_port;
+            session.client_rtcp_port = client_rtcp_port;
+
+            // Get client IP address from client_fd
+            struct sockaddr_in peer_addr{};
+            socklen_t peer_len = sizeof(peer_addr);
+            getpeername(client_fd, reinterpret_cast<struct sockaddr*>(&peer_addr), &peer_len);
+
+            session.client_rtp_addr = peer_addr;
+            session.client_rtp_addr.sin_port = htons(session.client_rtp_port);
+
+            // Create UDP socket and bind to server_rtp_port
+            int udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+            if (udp_fd >= 0) {
+                int opt = 1;
+                setsockopt(udp_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+                struct sockaddr_in bind_addr{};
+                bind_addr.sin_family = AF_INET;
+                bind_addr.sin_addr.s_addr = INADDR_ANY;
+                bind_addr.sin_port = htons(session.server_rtp_port);
+
+                if (bind(udp_fd, reinterpret_cast<struct sockaddr*>(&bind_addr), sizeof(bind_addr)) < 0) {
+                    std::cerr << "[RTSP WARN] Failed to bind UDP server port " << session.server_rtp_port << std::endl;
+                }
+                session.server_rtp_fd = udp_fd;
+            }
+
+            transport_resp << "RTP/AVP;unicast;client_port=" << session.client_rtp_port 
+                           << "-" << session.client_rtcp_port
+                           << ";server_port=" << session.server_rtp_port
+                           << "-" << (session.server_rtp_port + 1);
+
+            char client_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(peer_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
+            std::cout << "[RTSP INFO] Client fd=" << client_fd << " (" << client_ip 
+                      << ") negotiated UDP transport to client_port=" << session.client_rtp_port 
+                      << " from server_port=" << session.server_rtp_port << std::endl;
+        }
 
         {
             std::lock_guard<std::mutex> lock(sessions_mutex_);
@@ -359,7 +409,10 @@ void RtspServer::send_rtp_packet(RtspClientSession& session, const uint8_t* rtp_
                    reinterpret_cast<struct sockaddr*>(&session.client_rtp_addr),
                    sizeof(session.client_rtp_addr));
             if (sent < 0) {
-                session.state = SessionState::CLOSED;
+                // For UDP, occasional ENOBUFS / EAGAIN is expected; do not immediately tear down session.
+                if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ENOBUFS) {
+                    session.state = SessionState::CLOSED;
+                }
             }
         }
     }
