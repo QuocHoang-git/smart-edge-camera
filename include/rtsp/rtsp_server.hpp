@@ -55,7 +55,7 @@ struct StreamChannel {
  */
 class RtspServer {
 public:
-    explicit RtspServer(uint16_t port = 8554);
+    explicit RtspServer(uint16_t port = 554);
     ~RtspServer();
 
     RtspServer(const RtspServer&) = delete;

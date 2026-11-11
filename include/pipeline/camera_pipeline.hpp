@@ -30,7 +30,7 @@ struct CameraConfig {
     uint32_t sub_height{360};
     uint32_t fps{30};
     uint32_t buffer_count{4};
-    uint16_t rtsp_port{8554};
+    uint16_t rtsp_port{554};
     uint32_t main_bitrate{2500000}; // 2.5 Mbps
     uint32_t sub_bitrate{800000};   // 800 Kbps
 };

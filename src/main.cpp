@@ -53,8 +53,8 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "[SYSTEM] Dual-stream camera running in background.\n";
-    std::cout << "[SYSTEM] Main: rtsp://192.168.8.2:8554/live/main\n";
-    std::cout << "[SYSTEM] Sub:  rtsp://192.168.8.2:8554/live/sub\n";
+    std::cout << "[SYSTEM] Main: rtsp://192.168.8.2:" << config.rtsp_port << "/live/main (or rtsp://192.168.8.2/live/main)\n";
+    std::cout << "[SYSTEM] Sub:  rtsp://192.168.8.2:" << config.rtsp_port << "/live/sub (or rtsp://192.168.8.2/live/sub)\n";
     std::cout << "[SYSTEM] Press Ctrl+C to terminate.\n";
 
     // Main thread event loop (Signal check outside interrupt stack)

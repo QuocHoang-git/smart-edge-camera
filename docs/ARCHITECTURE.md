@@ -130,8 +130,8 @@ Unlike desktop Rockchip MPP implementations, the RV1106/RV1103 micro-SoC uses a 
        -c "export LD_LIBRARY_PATH=/oem/usr/lib; exec /tmp/smart_edge_camera /dev/video11 /tmp/face_detection_rv1106.rknn >/tmp/camera.log 2>&1"
    ```
 2. **Live RTSP Verification**:
-   - Main Stream: `rtsp://<CAMERA_IP>:8554/live/main`
-   - Sub Stream (AI OSD): `rtsp://<CAMERA_IP>:8554/live/sub`
+   - Main Stream: `rtsp://<CAMERA_IP>:554/live/main` (or default `rtsp://<CAMERA_IP>/live/main`)
+   - Sub Stream (AI OSD): `rtsp://<CAMERA_IP>:554/live/sub` (or default `rtsp://<CAMERA_IP>/live/sub`)
 
 
 ---
