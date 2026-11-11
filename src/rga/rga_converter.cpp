@@ -6,7 +6,6 @@
 #include "rga/rga_converter.hpp"
 
 #include <iostream>
-#include <chrono>
 #include <rga/rga.h>
 #include <rga/im2d.h>
 #include <rga/RgaApi.h>
@@ -34,46 +33,58 @@ bool RgaConverter::init() {
     return true;
 }
 
-bool RgaConverter::convert_nv12_to_rgb888(
-    const void* src_ptr, uint32_t src_w, uint32_t src_h,
-    void* dst_ptr, uint32_t dst_w, uint32_t dst_h) 
+bool RgaConverter::blit_dma_to_dma(
+    int src_fd, size_t src_size, uint32_t src_w, uint32_t src_h,
+    int dst_fd, size_t dst_size, uint32_t dst_w, uint32_t dst_h) 
 {
     if (!is_initialized_) {
         std::cerr << "[RGA ERROR] RGA converter not initialized!\n";
         return false;
     }
 
-    if (!src_ptr || !dst_ptr) {
-        std::cerr << "[RGA ERROR] Null buffer pointers passed to converter!\n";
+    if (src_fd < 0 || dst_fd < 0) {
+        std::cerr << "[RGA ERROR] Invalid file descriptors: src_fd=" << src_fd << ", dst_fd=" << dst_fd << "\n";
         return false;
     }
 
-    // Call underlying C function directly to ensure C++17 conformance
-    // Source: NV12 (RK_FORMAT_YCbCr_420_SP)
-    rga_buffer_t src = wrapbuffer_virtualaddr_t(
-        const_cast<void*>(src_ptr),
-        static_cast<int>(src_w),
-        static_cast<int>(src_h),
+    // Import BOTH source and destination into RGA kernel driver
+    rga_buffer_handle_t src_handle = importbuffer_fd(src_fd, static_cast<int>(src_size));
+    if (src_handle == 0) {
+        std::cerr << "[RGA ERROR] Failed to import src_fd " << src_fd << "\n";
+        return false;
+    }
+
+    rga_buffer_handle_t dst_handle = importbuffer_fd(dst_fd, static_cast<int>(dst_size));
+    if (dst_handle == 0) {
+        std::cerr << "[RGA ERROR] Failed to import dst_fd " << dst_fd << "\n";
+        releasebuffer_handle(src_handle);
+        return false;
+    }
+
+    // Wrap both using hardware handles (Rule: both must use handles!)
+    rga_buffer_t src = wrapbuffer_handle(
+        src_handle,
         static_cast<int>(src_w),
         static_cast<int>(src_h),
         RK_FORMAT_YCbCr_420_SP
     );
 
-    // Destination: RGB888 (RK_FORMAT_RGB_888)
-    rga_buffer_t dst = wrapbuffer_virtualaddr_t(
-        dst_ptr,
-        static_cast<int>(dst_w),
-        static_cast<int>(dst_h),
+    rga_buffer_t dst = wrapbuffer_handle(
+        dst_handle,
         static_cast<int>(dst_w),
         static_cast<int>(dst_h),
         RK_FORMAT_RGB_888
     );
 
-    // improcess executes hardware downscale and color transformation
-    int ret = improcess(src, dst, {}, {}, {}, {}, 0);
+    // Hardware downscale + color conversion (sync=1 wait until complete)
+    IM_STATUS ret = imresize_t(src, dst, 0, 0, 0, 1);
+
+    // Clean up handles
+    releasebuffer_handle(src_handle);
+    releasebuffer_handle(dst_handle);
 
     if (ret != IM_STATUS_SUCCESS) {
-        std::cerr << "[RGA ERROR] Hardware improcess failed with code: " << ret << "\n";
+        std::cerr << "[RGA ERROR] imresize_t failed with code: " << static_cast<int>(ret) << "\n";
         return false;
     }
 

@@ -40,26 +40,37 @@ add_library(camera_core STATIC
 )
 target_compile_options(camera_core PRIVATE ${COMMON_COMPILE_OPTIONS})
 
+# DMA Allocator Library
+add_library(dma_core STATIC
+    src/utils/dma_allocator.cpp
+)
+target_compile_options(dma_core PRIVATE ${COMMON_COMPILE_OPTIONS})
+
 # Core RGA Hardware Accelerator Library
 add_library(rga_core STATIC
     src/rga/rga_converter.cpp
 )
 target_compile_options(rga_core PRIVATE ${COMMON_COMPILE_OPTIONS})
 
-# Phase 3 Executable: Dual-Stream Pipeline PoC (1080p NV12 Main + 320x240 RGB888 Sub)
+# Phase 3 Executable: Dual-Stream Pipeline PoC
 add_executable(smart_edge_camera_poc
     src/main.cpp
 )
 
 target_compile_options(smart_edge_camera_poc PRIVATE ${COMMON_COMPILE_OPTIONS})
 
-# Link RGA dynamic library from SDK
 target_link_directories(smart_edge_camera_poc PRIVATE ${RGA_ROOT}/lib)
 target_link_libraries(smart_edge_camera_poc PRIVATE 
     camera_core 
+    dma_core
     rga_core 
     rga 
     pthread
+)
+
+set_target_properties(smart_edge_camera_poc PROPERTIES
+    BUILD_WITH_INSTALL_RPATH TRUE
+    INSTALL_RPATH "/oem/usr/lib:/usr/lib:/lib"
 )
 
 install(TARGETS smart_edge_camera_poc DESTINATION bin)

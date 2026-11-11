@@ -7,7 +7,7 @@
 set -euo pipefail
 
 TARGET_BIN="build/smart_edge_camera_poc"
-TARGET_DIR="/userdata"
+TARGET_DIR="/tmp"
 
 if [[ ! -f "${TARGET_BIN}" ]]; then
     echo "[ERROR] Binary ${TARGET_BIN} does not exist. Run scripts/build.sh first!"
@@ -26,7 +26,7 @@ elif [[ "${MODE}" == "ssh" ]]; then
     BOARD_IP="${2:-172.32.0.93}"
     echo "[DEPLOY] Pushing binary via SSH to root@${BOARD_IP}:${TARGET_DIR}..."
     scp "${TARGET_BIN}" "root@${BOARD_IP}:${TARGET_DIR}/"
-    ssh "root@${BOARD_IP}" "chmod +x ${TARGET_DIR}/smart_edge_camera_poc && ${TARGET_DIR}/smart_edge_camera_poc"
+    ssh "root@${BOARD_IP}" "chmod +x ${TARGET_DIR}/smart_edge_camera_poc && LD_LIBRARY_PATH=/oem/usr/lib:/usr/lib:/lib ${TARGET_DIR}/smart_edge_camera_poc"
 else
     echo "Usage: $0 [adb | ssh <BOARD_IP>]"
     exit 1

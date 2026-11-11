@@ -186,7 +186,22 @@ bool V4L2Camera::request_and_mmap_buffers(uint32_t buffer_count) {
         buffers_[i].start = start;
         buffers_[i].length = planes[0].length;
         buffers_[i].index = i;
-        buffers_[i].dma_fd = -1; // To be populated in Phase 3 if DMA-BUF export is used
+
+        // Export DMA-BUF file descriptor for Zero-Copy pipeline
+        struct v4l2_exportbuffer expbuf;
+        std::memset(&expbuf, 0, sizeof(expbuf));
+        expbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        expbuf.index = i;
+        expbuf.plane = 0;
+        expbuf.flags = O_CLOEXEC | O_RDWR;
+
+        if (ioctl(fd_, VIDIOC_EXPBUF, &expbuf) < 0) {
+            std::cerr << "[V4L2 WARNING] VIDIOC_EXPBUF failed for buffer " << i 
+                      << ": " << std::strerror(errno) << "\n";
+            buffers_[i].dma_fd = -1;
+        } else {
+            buffers_[i].dma_fd = expbuf.fd;
+        }
 
         // Queue the initial empty buffer to driver pool
         if (ioctl(fd_, VIDIOC_QBUF, &buf) < 0) {
