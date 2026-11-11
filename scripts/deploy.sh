@@ -26,6 +26,11 @@ elif [[ "${MODE}" == "ssh" ]]; then
     BOARD_IP="${2:-172.32.0.93}"
     echo "[DEPLOY] Pushing binary via SSH to root@${BOARD_IP}:${TARGET_DIR}..."
     scp "${TARGET_BIN}" "root@${BOARD_IP}:${TARGET_DIR}/"
+    MODEL_FILE="models/face_detection_rv1106.rknn"
+    if [[ -f "${MODEL_FILE}" ]]; then
+        echo "[DEPLOY] Pushing model ${MODEL_FILE} to ${TARGET_DIR}..."
+        scp "${MODEL_FILE}" "root@${BOARD_IP}:${TARGET_DIR}/"
+    fi
     ssh "root@${BOARD_IP}" "chmod +x ${TARGET_DIR}/smart_edge_camera_poc && LD_LIBRARY_PATH=/oem/usr/lib:/usr/lib:/lib ${TARGET_DIR}/smart_edge_camera_poc"
 else
     echo "Usage: $0 [adb | ssh <BOARD_IP>]"

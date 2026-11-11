@@ -28,6 +28,7 @@ endif()
 # SDK Path Definitions
 set(LUCKFOX_SDK_PATH "/home/userver/1_Workspace/97_LinuxCustom/luckfox-pico" CACHE PATH "Path to Luckfox Pico SDK")
 set(RGA_ROOT "${LUCKFOX_SDK_PATH}/media/rga/release_rga_rv1106_arm-rockchip830-linux-uclibcgnueabihf")
+set(RKNN_LIB_DIR "${LUCKFOX_SDK_PATH}/media/out/lib")
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -52,19 +53,31 @@ add_library(rga_core STATIC
 )
 target_compile_options(rga_core PRIVATE ${COMMON_COMPILE_OPTIONS})
 
-# Phase 3 Executable: Dual-Stream Pipeline PoC
+# Core NPU RKNN Runtime Library
+add_library(npu_core STATIC
+    src/npu/rknn_engine.cpp
+)
+target_compile_options(npu_core PRIVATE ${COMMON_COMPILE_OPTIONS})
+
+# Phase 4 Executable: Full Vision Pipeline (V4L2 1080p -> RGA Downscale -> NPU Face Detection)
 add_executable(smart_edge_camera_poc
     src/main.cpp
 )
 
 target_compile_options(smart_edge_camera_poc PRIVATE ${COMMON_COMPILE_OPTIONS})
 
-target_link_directories(smart_edge_camera_poc PRIVATE ${RGA_ROOT}/lib)
+target_link_directories(smart_edge_camera_poc PRIVATE 
+    ${RGA_ROOT}/lib
+    ${RKNN_LIB_DIR}
+)
+
 target_link_libraries(smart_edge_camera_poc PRIVATE 
     camera_core 
     dma_core
     rga_core 
+    npu_core
     rga 
+    rknnmrt
     pthread
 )
 

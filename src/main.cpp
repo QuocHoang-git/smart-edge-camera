@@ -1,41 +1,56 @@
 /**
  * @file main.cpp
- * @brief Phase 3 PoC: Dual-Stream Pipeline with End-to-End Zero-Copy DMA-BUF RGA Hardware Blit.
+ * @brief Phase 4 PoC: Complete Hardware Pipeline (V4L2 1080p -> RGA Downscale -> NPU Face Detection).
  */
 
 #include "camera/v4l2_camera.hpp"
 #include "rga/rga_converter.hpp"
 #include "utils/dma_allocator.hpp"
+#include "npu/rknn_engine.hpp"
 
 #include <iostream>
 #include <chrono>
 
 int main(int argc, char* argv[]) {
     std::string dev_node = "/dev/video11";
-    if (argc > 1) {
-        dev_node = argv[1];
-    }
+    std::string model_path = "/userdata/face_detection_rv1106.rknn";
+
+    if (argc > 1) dev_node = argv[1];
+    if (argc > 2) model_path = argv[2];
 
     std::cout << "========================================================\n";
-    std::cout << "  Smart Edge Camera - Phase 3 Dual-Stream RGA Pipeline  \n";
-    std::cout << "  Hardware: Rockchip RV1103 (End-to-End Zero-Copy DMA)  \n";
+    std::cout << "  Smart Edge Camera - Phase 4 NPU Face Detection Pipeline\n";
+    std::cout << "  Hardware: Rockchip RV1103 (V4L2 + RGA + RKNN NPU)     \n";
     std::cout << "========================================================\n";
 
     constexpr uint32_t MAIN_W = 1920;
     constexpr uint32_t MAIN_H = 1080;
 
-    constexpr uint32_t SUB_W = 320;
-    constexpr uint32_t SUB_H = 240;
-    constexpr size_t SUB_SIZE = SUB_W * SUB_H * 3; // 230,400 bytes
+    // Step 1: Initialize RKNN NPU Engine and Inspect Model Topology
+    edge_camera::RknnEngine npu;
+    std::cout << "[INIT] Initializing RKNN NPU Engine with model: " << model_path << "...\n";
+    if (!npu.init(model_path)) {
+        std::cerr << "[ERROR] Failed to initialize RKNN NPU Engine!\n";
+        return 1;
+    }
 
-    // Allocate Sub-Stream buffer via CMA DMA-Heap
+    const auto& npu_input = npu.input_attr();
+    uint32_t sub_w = npu_input.width;
+    uint32_t sub_h = npu_input.height;
+    size_t sub_size = npu_input.size;
+
+    std::cout << "[INIT] Dynamic Pipeline Linking: RGA Sub-Stream matching NPU Input ("
+              << sub_w << "x" << sub_h << ", " << sub_size << " bytes)...\n";
+
+    // Step 2: Allocate Physically Contiguous Memory for Sub-Stream via Linux DMA-Heap
     edge_camera::DmaBuffer sub_dma_buffer;
     std::cout << "[INIT] Allocating Sub-Stream buffer via CMA DMA-Heap...\n";
-    if (!sub_dma_buffer.allocate(SUB_SIZE)) {
+    if (!sub_dma_buffer.allocate(sub_size)) {
         std::cerr << "[ERROR] Failed to allocate CMA memory for Sub-Stream!\n";
         return 1;
     }
 
+    // Step 3: Initialize RGA 2D Hardware Accelerator
     edge_camera::RgaConverter rga;
     std::cout << "[INIT] Initializing RGA 2D Hardware Accelerator...\n";
     if (!rga.init()) {
@@ -43,6 +58,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Step 4: Initialize V4L2 Camera (1080p NV12)
     edge_camera::V4L2Camera camera(dev_node);
     std::cout << "[INIT] Initializing V4L2 Camera (" << MAIN_W << "x" << MAIN_H << " NV12)...\n";
     if (!camera.init(MAIN_W, MAIN_H, V4L2_PIX_FMT_NV12, 4)) {
@@ -55,7 +71,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Warm-up ISP pipeline (10 frames)
+    // Step 5: Warm-up ISP pipeline (10 frames)
     std::cout << "[INIT] Warming up ISP pipeline (10 frames)...\n";
     for (int i = 0; i < 10; ++i) {
         edge_camera::FrameBuffer warmup_frame;
@@ -63,10 +79,11 @@ int main(int argc, char* argv[]) {
             camera.enqueue_frame(warmup_frame);
         }
     }
-    std::cout << "[INIT] ISP warm-up complete. Starting Dual-Stream benchmark...\n";
+    std::cout << "[INIT] ISP warm-up complete. Starting Full End-to-End Pipeline Benchmark...\n";
 
     constexpr int TEST_FRAMES = 25;
     double total_rga_time_ms = 0.0;
+    double total_npu_time_ms = 0.0;
     int successful_frames = 0;
 
     for (int i = 0; i < TEST_FRAMES; ++i) {
@@ -76,29 +93,43 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // Hardware Acceleration: Zero-Copy DMA to DMA Blit
-        auto t0 = std::chrono::steady_clock::now();
+        auto frame_start_tp = std::chrono::steady_clock::now();
 
+        // Stage A: Hardware RGA Scaling (1080p NV12 -> NPU Input Size RGB888)
+        auto t_rga_start = std::chrono::steady_clock::now();
         bool rga_ok = rga.blit_dma_to_dma(
             main_frame.dma_fd, main_frame.length, MAIN_W, MAIN_H,
-            sub_dma_buffer.fd(), SUB_SIZE, SUB_W, SUB_H
+            sub_dma_buffer.fd(), sub_size, sub_w, sub_h
         );
-
-        auto t1 = std::chrono::steady_clock::now();
-        double rga_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        auto t_rga_end = std::chrono::steady_clock::now();
+        double rga_ms = std::chrono::duration<double, std::milli>(t_rga_end - t_rga_start).count();
 
         // Release Main Stream frame back to kernel immediately
         camera.enqueue_frame(main_frame);
 
         if (!rga_ok) {
-            std::cerr << "[ERROR] RGA conversion failed on frame " << i << "\n";
+            std::cerr << "[ERROR] RGA blit failed on frame " << i << "\n";
+            continue;
+        }
+
+        // Stage B: Hardware NPU Inference (Synchronous execution on RV1103 NPU)
+        double npu_ms = 0.0;
+        bool npu_ok = npu.run_inference(sub_dma_buffer.data(), sub_size, npu_ms);
+
+        auto frame_end_tp = std::chrono::steady_clock::now();
+        double total_pipeline_ms = std::chrono::duration<double, std::milli>(frame_end_tp - frame_start_tp).count();
+
+        if (!npu_ok) {
+            std::cerr << "[ERROR] NPU inference failed on frame " << i << "\n";
         } else {
             total_rga_time_ms += rga_ms;
+            total_npu_time_ms += npu_ms;
             successful_frames++;
+
             std::cout << " -> Frame #" << i 
-                      << " | Main DMA-FD: " << main_frame.dma_fd 
-                      << " | Sub DMA-FD: " << sub_dma_buffer.fd() 
-                      << " | RGA HW Latency: " << rga_ms << " ms\n";
+                      << " | RGA Blit: " << rga_ms << " ms"
+                      << " | NPU Inference: " << npu_ms << " ms"
+                      << " | Total Vision Latency: " << total_pipeline_ms << " ms\n";
         }
     }
 
@@ -106,10 +137,13 @@ int main(int argc, char* argv[]) {
     camera.stop_stream();
 
     std::cout << "\n========================================================\n";
-    std::cout << "  Dual-Stream Performance Summary:                      \n";
+    std::cout << "  End-to-End Pipeline Performance Summary:              \n";
     if (successful_frames > 0) {
-        std::cout << "  Successful Frames         : " << successful_frames << "/" << TEST_FRAMES << "\n";
-        std::cout << "  Average RGA Hardware Time : " << (total_rga_time_ms / successful_frames) << " ms\n";
+        std::cout << "  Successful Frames          : " << successful_frames << "/" << TEST_FRAMES << "\n";
+        std::cout << "  Average RGA Hardware Blit  : " << (total_rga_time_ms / successful_frames) << " ms\n";
+        std::cout << "  Average NPU Inference Time : " << (total_npu_time_ms / successful_frames) << " ms\n";
+        std::cout << "  Total End-to-End Latency   : " << ((total_rga_time_ms + total_npu_time_ms) / successful_frames) << " ms\n";
+        std::cout << "  Theoretical Max Vision FPS : " << (1000.0 / ((total_rga_time_ms + total_npu_time_ms) / successful_frames)) << " FPS\n";
     }
     std::cout << "========================================================\n";
 
