@@ -23,6 +23,14 @@ struct NpuTensorAttr {
     rknn_tensor_type type{RKNN_TENSOR_UINT8};
 };
 
+struct DetectionBox {
+    float xmin{0.0f};
+    float ymin{0.0f};
+    float xmax{0.0f};
+    float ymax{0.0f};
+    float score{0.0f};
+};
+
 class RknnEngine {
 public:
     RknnEngine() = default;
@@ -62,6 +70,20 @@ public:
     [[nodiscard]] const NpuTensorAttr& input_attr() const noexcept { return input_attr_; }
     [[nodiscard]] uint32_t output_count() const noexcept { return io_num_.n_output; }
     [[nodiscard]] bool is_initialized() const noexcept { return ctx_ != 0; }
+
+    [[nodiscard]] void* output_data(uint32_t index) const {
+        if (index < output_mems_.size() && output_mems_[index]) {
+            return output_mems_[index]->virt_addr;
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] const rknn_tensor_attr* output_attr(uint32_t index) const {
+        if (index < output_attrs_.size()) {
+            return &output_attrs_[index];
+        }
+        return nullptr;
+    }
 
 private:
     bool query_model_attributes();

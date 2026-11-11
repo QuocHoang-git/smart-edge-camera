@@ -1,11 +1,12 @@
 /**
  * @file rga_converter.cpp
- * @brief Implementation of hardware accelerated RGA image converter.
+ * @brief Implementation of hardware accelerated RGA image converter and OSD drawer.
  */
 
 #include "rga/rga_converter.hpp"
 
 #include <iostream>
+#include <algorithm>
 #include <rga/im2d.h>
 #include <rga/RgaApi.h>
 
@@ -88,6 +89,54 @@ bool RgaConverter::blit_dma_to_dma(
         return false;
     }
 
+    return true;
+}
+
+bool RgaConverter::draw_rect_dma(
+    int dst_fd, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
+    int x, int y, int w, int h, int thickness,
+    uint32_t color_argb, int dst_format)
+{
+    if (!is_initialized_ || dst_fd < 0 || w <= 0 || h <= 0) {
+        return false;
+    }
+
+    rga_buffer_handle_t dst_handle = importbuffer_fd(dst_fd, static_cast<int>(dst_size));
+    if (dst_handle == 0) {
+        return false;
+    }
+
+    rga_buffer_t dst = wrapbuffer_handle(
+        dst_handle,
+        static_cast<int>(dst_w),
+        static_cast<int>(dst_h),
+        dst_format
+    );
+
+    // Clamp boundary
+    int x1 = std::max(0, x);
+    int y1 = std::max(0, y);
+    int x2 = std::min(static_cast<int>(dst_w), x + w);
+    int y2 = std::min(static_cast<int>(dst_h), y + h);
+
+    int rect_w = x2 - x1;
+    int rect_h = y2 - y1;
+    int t = std::min(thickness, std::min(rect_w, rect_h));
+
+    if (rect_w > 0 && rect_h > 0 && t > 0) {
+        // Draw 4 borders: Top, Bottom, Left, Right
+        im_rect top = {x1, y1, rect_w, t};
+        im_rect bottom = {x1, y2 - t, rect_w, t};
+        im_rect left = {x1, y1, t, rect_h};
+        im_rect right = {x2 - t, y1, t, rect_h};
+
+        imfill_t(dst, top, static_cast<int>(color_argb), 1);
+        imfill_t(dst, bottom, static_cast<int>(color_argb), 1);
+        imfill_t(dst, left, static_cast<int>(color_argb), 1);
+        imfill_t(dst, right, static_cast<int>(color_argb), 1);
+    }
+
+    releasebuffer_handle(dst_handle);
     return true;
 }
 

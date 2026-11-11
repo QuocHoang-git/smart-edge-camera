@@ -28,11 +28,13 @@ endif()
 # SDK Path Definitions
 set(LUCKFOX_SDK_PATH "/home/userver/1_Workspace/97_LinuxCustom/luckfox-pico" CACHE PATH "Path to Luckfox Pico SDK")
 set(RGA_ROOT "${LUCKFOX_SDK_PATH}/media/rga/release_rga_rv1106_arm-rockchip830-linux-uclibcgnueabihf")
+set(MPP_ROOT "${LUCKFOX_SDK_PATH}/media/mpp/release_mpp_rv1106_arm-rockchip830-linux-uclibcgnueabihf")
 set(RKNN_LIB_DIR "${LUCKFOX_SDK_PATH}/media/out/lib")
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${RGA_ROOT}/include
+    ${MPP_ROOT}/include/rockchip
 )
 
 # 1. Camera V4L2 Module
@@ -59,7 +61,19 @@ add_library(npu_core STATIC
 )
 target_compile_options(npu_core PRIVATE ${COMMON_COMPILE_OPTIONS})
 
-# 5. Multi-Threaded Pipeline Coordinator Module
+# 5. MPP Hardware Video Encoder Module
+add_library(encoder_core STATIC
+    src/encoder/mpp_encoder.cpp
+)
+target_compile_options(encoder_core PRIVATE ${COMMON_COMPILE_OPTIONS})
+
+# 6. Embedded RTSP Server Module
+add_library(rtsp_core STATIC
+    src/rtsp/rtsp_server.cpp
+)
+target_compile_options(rtsp_core PRIVATE ${COMMON_COMPILE_OPTIONS})
+
+# 7. Multi-Threaded Pipeline Coordinator Module
 add_library(pipeline_core STATIC
     src/pipeline/camera_pipeline.cpp
 )
@@ -74,6 +88,7 @@ target_compile_options(smart_edge_camera PRIVATE ${COMMON_COMPILE_OPTIONS})
 
 target_link_directories(smart_edge_camera PRIVATE 
     ${RGA_ROOT}/lib
+    ${MPP_ROOT}/lib
     ${RKNN_LIB_DIR}
 )
 
@@ -83,7 +98,10 @@ target_link_libraries(smart_edge_camera PRIVATE
     dma_core
     rga_core 
     npu_core
+    encoder_core
+    rtsp_core
     rga 
+    rockchip_mpp
     rknnmrt
     pthread
 )
