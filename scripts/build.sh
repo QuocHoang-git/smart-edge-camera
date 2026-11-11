@@ -31,5 +31,5 @@ cmake -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
 make -j$(nproc)
 
 echo "=========================================================="
-echo " Build successful: ${BUILD_DIR}/smart_edge_camera_poc"
+echo " Build successful: ${BUILD_DIR}/smart_edge_camera"
 echo "=========================================================="
