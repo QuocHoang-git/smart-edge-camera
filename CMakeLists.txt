@@ -13,12 +13,9 @@ set(COMMON_COMPILE_OPTIONS
     -Wpedantic
     -Wshadow
     -Wnon-virtual-dtor
-    -Wold-style-cast
     -Wcast-align
     -Wunused
     -Woverloaded-virtual
-    -Wconversion
-    -Wsign-conversion
     -pthread
 )
 
@@ -28,22 +25,41 @@ else()
     list(APPEND COMMON_COMPILE_OPTIONS -O2 -DNDEBUG)
 endif()
 
+# SDK Path Definitions
+set(LUCKFOX_SDK_PATH "/home/userver/1_Workspace/97_LinuxCustom/luckfox-pico" CACHE PATH "Path to Luckfox Pico SDK")
+set(RGA_ROOT "${LUCKFOX_SDK_PATH}/media/rga/release_rga_rv1106_arm-rockchip830-linux-uclibcgnueabihf")
+
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${RGA_ROOT}/include
 )
 
-# Core Camera Library
+# Core Camera V4L2 Library
 add_library(camera_core STATIC
     src/camera/v4l2_camera.cpp
 )
 target_compile_options(camera_core PRIVATE ${COMMON_COMPILE_OPTIONS})
 
-# Phase 2 Executable: V4L2 Capture & Frame Timing Validator
+# Core RGA Hardware Accelerator Library
+add_library(rga_core STATIC
+    src/rga/rga_converter.cpp
+)
+target_compile_options(rga_core PRIVATE ${COMMON_COMPILE_OPTIONS})
+
+# Phase 3 Executable: Dual-Stream Pipeline PoC (1080p NV12 Main + 320x240 RGB888 Sub)
 add_executable(smart_edge_camera_poc
     src/main.cpp
 )
 
 target_compile_options(smart_edge_camera_poc PRIVATE ${COMMON_COMPILE_OPTIONS})
-target_link_libraries(smart_edge_camera_poc PRIVATE camera_core pthread)
+
+# Link RGA dynamic library from SDK
+target_link_directories(smart_edge_camera_poc PRIVATE ${RGA_ROOT}/lib)
+target_link_libraries(smart_edge_camera_poc PRIVATE 
+    camera_core 
+    rga_core 
+    rga 
+    pthread
+)
 
 install(TARGETS smart_edge_camera_poc DESTINATION bin)
