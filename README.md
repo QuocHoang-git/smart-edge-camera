@@ -9,6 +9,18 @@ A high-performance embedded Linux vision firmware developed for the **Luckfox Pi
 
 ---
 
+## 🎥 Live Dual-Stream & AI Inference Demonstration
+
+<p align="center">
+  <img src="docs/assets/demo_dual_stream.gif" alt="Dual-Stream H.264 & Real-Time Face Detection Demo" width="90%">
+</p>
+
+*Trình chiếu đồng thời 2 luồng RTSP độc lập từ Luckfox Pico Pro (RV1106) tại 30 FPS:*
+- **Cửa sổ 1 (Trái - `rtsp://<BOARD_IP>:554/live/main`)**: Luồng 1080p H.264 nguyên bản (Pristine Video), không chèn OSD, phục vụ trích xuất bằng chứng an ninh.
+- **Cửa sổ 2 (Phải - `rtsp://<BOARD_IP>:554/live/sub`)**: Luồng 640x360 H.264 preview thời gian thực, có khung màu xanh (Bounding Box) bám theo khuôn mặt do NPU RetinaFace phát hiện và RGA burn-in trực tiếp trên phần cứng.
+
+---
+
 ## 1. System Architecture & Live Pipeline
 
 ```
