@@ -35,7 +35,7 @@ def generate_hardware_pipeline_svg(filepath):
 
   <!-- Title -->
   <text x="500" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#f0f6fc">Smart Edge Camera: Dual-Stream Zero-Copy Pipeline</text>
-  <text x="500" y="65" text-anchor="middle" font-size="13" fill="#8b949e">Rockchip RV1103 (Cortex-A7 @ 1.2GHz, 64MB DDR2, 0.5 TOPS NPU) Hardware Flow</text>
+  <text x="500" y="65" text-anchor="middle" font-size="13" fill="#8b949e">Luckfox Pico Pro (RV1106 @ 1.2GHz, 128MB RAM [66MB CMA], 0.5 TOPS NPU)</text>
 
   <!-- Hardware Container -->
   <rect x="30" y="90" width="940" height="530" rx="12" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>

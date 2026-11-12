@@ -1,6 +1,6 @@
 # Smart Edge Camera Firmware: Systems Architecture Specification
 
-**Target Platform**: Rockchip RV1103 (ARM Cortex-A7 @ 1.2GHz, NPU 0.5 TOPS, 64MB DDR2 SIP)  
+**Target Platform**: Luckfox Pico Pro (Rockchip RV1106G3 / RV1103, ARM Cortex-A7 @ 1.2GHz, NPU 0.5 TOPS, 128MB RAM)  
 **Target Organization**: Motorola Solutions - Specialty Cameras & Embedded Vision Firmware  
 **Standard**: C++17, POSIX Real-Time, Embedded Linux (`uClibc-ng`, Buildroot)  
 
@@ -8,7 +8,7 @@
 
 ## 1. System Overview & Hardware Topology
 
-The **Smart Edge Camera** is an ultra-low-latency, zero-copy dual-stream surveillance camera firmware engineered for extreme resource-constrained edge SoCs (Rockchip RV1103 with 64MB DDR2). It delivers simultaneous **1080p evidentiary video streaming**, **640x360 real-time preview streaming with live AI bounding box overlays**, and on-device **RetinaFace NPU face detection** running at **30 FPS continuous**.
+The **Smart Edge Camera** is an ultra-low-latency, zero-copy dual-stream surveillance camera firmware engineered for edge SoCs (Luckfox Pico Pro with 128MB RAM). It delivers simultaneous **1080p evidentiary video streaming**, **640x360 real-time preview streaming with live AI bounding box overlays**, and on-device **RetinaFace NPU face detection** running at **30 FPS continuous**.
 
 ![Dual-Stream Zero-Copy Hardware Pipeline](diagrams/hardware_pipeline.svg)
 
@@ -47,19 +47,21 @@ flowchart TD
 
 ## 2. Memory Budget & Zero-Copy Architecture
 
-On the Rockchip RV1103 SoC, the integrated **64MB DDR2** memory is physically partitioned into two distinct domains:
+On the **Luckfox Pico Pro**, the physical RAM is **128 MB** (physical address `0x00000000 - 0x07ffffff` in `/proc/iomem`). By kernel boot configuration (`/proc/cmdline`), it is partitioned into two distinct domains:
+- **Rockchip CMA Heap (`rk_dma_heap_cma = 66M`)**: 66 MB reserved strictly for hardware zero-copy DMA engines (ISP, RGA, NPU, MPP).
+- **Linux Normal System Memory (`54,292 kB ~ 53 MB`)**: Userspace applications, network buffers, kernel slab, and system daemons.
 
 ```
-                      RV1103 Physical RAM (64 MB)
+                  Luckfox Pico Pro Physical RAM (128 MB)
 +------------------------------------+------------------------------------+
 |         CMA Reserved Pool          |       Linux Normal Memory          |
-|              (32 MB)               |             (32 MB)                |
+|              (66 MB)               |             (62 MB)                |
 +------------------------------------+------------------------------------+
 | - 4x 1080p V4L2 Buffers (12.44 MB) | - Linux Kernel & Slab Cache (~16MB)|
 | - 1x 640x360 Sub-stream (0.35 MB)  | - System Daemons / uClibc (~8 MB)  |
 | - 1x 640x640 AI Tensor (1.23 MB)   | - Smart Camera Application (< 8 MB)|
-| - NPU Model Weights & Temp (~4 MB) | - Network Socket Buffers (~2 MB)   |
-| - MPP Encoder Reference Buffers    |                                    |
+| - NPU Model Weights & Temp (~8 MB) | - Available / Page Cache (~30 MB)  |
+| - MPP Dual VEPU Reference Buffers  |                                    |
 +------------------------------------+------------------------------------+
 ```
 
