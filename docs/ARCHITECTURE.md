@@ -65,10 +65,9 @@ On the **Luckfox Pico Pro**, the physical RAM is **128 MB** (physical address `0
 ```
 
 ### The Zero-Copy Imperative
-- A single 1080p (1920x1080) NV12 frame requires:
-  $$\text{Size} = 1920 \times 1080 \times 1.5 = 3{,}110{,}400\text{ bytes} \approx 3.11\text{ MB}$$
-- 4 ring buffers in the V4L2 pool require $4 \times 3.11 = 12.44\text{ MB}$ of contiguous physical memory.
-- **DDR2 Memory Bandwidth Limit**: RV1103 DDR2 runs at 400 MHz (16-bit bus), providing a theoretical bandwidth ceiling of $\approx 1.6\text{ GB/s}$.
+- A single 1080p (1920x1080) NV12 frame requires: `1920 * 1080 * 1.5 = 3,110,400 bytes (~3.11 MB)`.
+- 4 ring buffers in the V4L2 pool require `4 * 3.11 = 12.44 MB` of contiguous physical memory.
+- **DDR2 Memory Bandwidth Limit**: RV1103 DDR2 runs at 400 MHz (16-bit bus), providing a theoretical bandwidth ceiling of `~1.6 GB/s`.
 - If userspace executed CPU `memcpy` copies between V4L2, RGA, NPU, and MPP, DDR2 bandwidth would instantly saturate, resulting in CPU cache thrashing and kernel Out-Of-Memory (OOM) killing.
 - **Solution**: All modules communicate solely via **Linux DMA-BUF file descriptors** (`dma_fd`). Buffers allocated once via `/dev/rk_dma_heap/rk-dma-heap-cma` are mapped directly to hardware registers.
 
@@ -130,7 +129,7 @@ sequenceDiagram
 
 ### The Problem: 1.78x Vertical Facial Distortion
 The camera sub-stream is **16:9** (`640x360`). The official Rockchip RetinaFace NPU model expects a **1:1 square** (`640x640`).
-- If `640x360` is directly stretched to `640x640`, the vertical dimension is elongated by $\frac{640}{360} = 1.778\times$ (nearly 80% taller).
+- If `640x360` is directly stretched to `640x640`, the vertical dimension is elongated by `640 / 360 = 1.778×` (nearly 80% taller).
 - Because RetinaFace anchor priors are calibrated for natural human facial geometry (1:1), stretched faces cause regression errors, severe confidence fluctuation, and jittering boxes.
 
 ![Letterbox Geometry](diagrams/letterbox_geometry.svg)
@@ -138,20 +137,20 @@ The camera sub-stream is **16:9** (`640x360`). The official Rockchip RetinaFace 
 ### The Solution: Hardware Accelerated Letterbox Blit
 Using Rockchip RGA `improcess()` hardware ROI clipping:
 1. The `640x360` frame is placed at the vertical center of the `640x640` AI input buffer:
-   $$\text{pad\_top} = \frac{640 - 360}{2} = 140\text{ pixels}, \quad \text{pad\_bottom} = 140\text{ pixels}$$
-2. The destination rectangle is strictly bounded to $x \in [0, 640], y \in [140, 500]$.
-3. Rows $0 \dots 139$ and $500 \dots 639$ remain pure black ($0$).
-4. **Result**: 100% natural facial geometry with **zero distortion**. Confidence jumped from $\approx 0.73$ to **$4.38$** on actual hardware.
+   - `pad_top = (640 - 360) / 2 = 140 pixels`
+   - `pad_bottom = 140 pixels`
+2. The destination rectangle is strictly bounded to `x in [0, 640], y in [140, 500]`.
+3. Rows 0..139 and 500..639 remain pure black (padding).
+4. **Result**: 100% natural facial geometry with **zero distortion**. Confidence jumped from ~0.73 to **4.38** on actual hardware.
 
 ### Coordinate Inverse Mapping
-When the NPU detects a bounding box $[x_1, y_1, x_2, y_2]$ normalized in $[0, 1]$ on the $640 \times 640$ buffer:
-$$\begin{aligned}
-x_{\text{sub}} &= x_{640} = x_1 \times 640.0 \\
-y_{\text{sub}} &= y_{640} - \text{PAD\_Y} = y_1 \times 640.0 - 140.0 \\
-w_{\text{sub}} &= (x_2 - x_1) \times 640.0 \\
-h_{\text{sub}} &= (y_2 - y_1) \times 640.0
-\end{aligned}$$
-Coordinates are clamped to $[0, 640]$ and $[0, 360]$, then aligned to even integers (`bx &= ~1; by &= ~1; bw &= ~1; bh &= ~1;`) for NV12 chroma subsampling compatibility.
+When the NPU detects a bounding box `[x1, y1, x2, y2]` normalized in `[0, 1]` on the 640x640 buffer:
+- `x_sub = x1 * 640.0`
+- `y_sub = y1 * 640.0 - 140.0`
+- `w_sub = (x2 - x1) * 640.0`
+- `h_sub = (y2 - y1) * 640.0`
+
+Coordinates are clamped to `[0, 640]` and `[0, 360]`, then aligned to even integers (`bx &= ~1; by &= ~1; bw &= ~1; bh &= ~1;`) for NV12 chroma subsampling compatibility.
 
 ---
 
@@ -178,12 +177,12 @@ flowchart LR
 
 1. **Background Logit Suppression**:
    RetinaFace output tensor #1 contains 2 logits: channel 0 is background logit, channel 1 is face logit. Boxes are accepted only when:
-   $$\text{face\_score} \ge 0.55 \quad \text{AND} \quad \text{face\_score} > \text{bg\_score}$$
+   - `face_score >= 0.55` **AND** `face_score > bg_score`
 2. **Exponential Moving Average (EMA) Smoothing**:
-   To prevent bounding box jitter caused by quantization noise across consecutive frames with $\text{IoU} > 0.30$:
-   $$\text{box}_t = 0.65 \times \text{box}_{\text{new}} + 0.35 \times \text{box}_{t-1}$$
+   To prevent bounding box jitter caused by quantization noise across consecutive frames with `IoU > 0.30`:
+   - `box_t = 0.65 * box_new + 0.35 * box_{t-1}`
 3. **Multi-Frame Persistence Tracker**:
-   If a face is temporarily missed for 1 to 3 frames (due to motion blur or fast turning), the tracker retains the previous bounding box for up to **3 frames ($\approx 100\text{ ms}$)** before discarding it, completely eliminating visible flickering.
+   If a face is temporarily missed for 1 to 3 frames (due to motion blur or fast turning), the tracker retains the previous bounding box for up to **3 frames (~100 ms)** before discarding it, completely eliminating visible flickering.
 
 ---
 
@@ -191,7 +190,7 @@ flowchart LR
 
 Measured live on production hardware (Rockchip RV1103 @ 1.2GHz, SC3336 3MP sensor, Linux 5.10):
 
-| Pipeline Stage | Engine / Device | Resolution / Format | Latency ($\Delta t$) | Real-Time Throughput |
+| Pipeline Stage | Engine / Device | Resolution / Format | Latency (Δt) | Real-Time Throughput |
 | :--- | :--- | :--- | :--- | :--- |
 | **Camera Ingestion** | MIPI-CSI2 + ISP3A | 1920x1080 NV12 | Hardware pipeline | **30.00 FPS** (0 drops) |
 | **Main Stream Encode** | MPP VEPU (Chan 0) | 1080p H.264 CBR (2.5 Mbps) | ~4.2 ms | **30.00 FPS** |

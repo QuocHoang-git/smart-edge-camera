@@ -75,15 +75,16 @@ A high-performance embedded Linux vision firmware developed for the **Luckfox Pi
 - **Sub Stream (`/live/sub`)**: 640x360 @ 30 FPS, H.264 Baseline, 800 Kbps CBR, GOP=60. Real-time preview with AI bounding boxes burned directly into hardware NV12 frames by RGA before encoding.
 
 ### 3. Aspect-Preserving RGA Letterbox ROI (1:1 Aspect Ratio)
-- **Root Cause of Distortion**: Sub-stream is 16:9 (`640x360`), while RetinaFace requires 1:1 (`640x640`). Directly stretching 360p to 640p elongates faces vertically by **$1.78\times$**, degrading detection confidence and warping bounding boxes.
+- **Root Cause of Distortion**: Sub-stream is 16:9 (`640x360`), while RetinaFace requires 1:1 (`640x640`). Directly stretching 360p to 640p elongates faces vertically by **1.78×** (nearly 80% taller), degrading detection confidence and warping bounding boxes.
 - **Hardware Solution**: RGA `improcess()` scales `640x360` with a 140-pixel black border on top and bottom (`pad_y = 140`), presenting a 100% natural, undistorted image to the NPU.
 - **Inverse Coordinate Mapping**: Box coordinates from the NPU are mapped back accurately to sub-stream pixels:
-  $$y_{\text{sub}} = y_{640} - 140, \quad x_{\text{sub}} = x_{640}$$
+  - `y_sub = y_640 - 140`
+  - `x_sub = x_640`
 
 ### 4. Robust RetinaFace Postprocessing, NMS & EMA Tracking
-- **Background Logit Suppression**: Enforces $\text{face\_score} \ge 0.55$ **and** $\text{face\_score} > \text{bg\_score}$ to eliminate false positive background clutter.
-- **EMA Temporal Smoothing**: Applies Exponential Moving Average ($\alpha = 0.65$) across frames with $\text{IoU} > 0.30$, eliminating boundary jitter and quantization noise.
-- **Persistence Tracking**: Retains tracked faces for up to **3 frames ($\approx 100\text{ ms}$)** during transient occlusion or fast head turns, completely preventing visible box flickering.
+- **Background Logit Suppression**: Enforces `face_score >= 0.55` **and** `face_score > bg_score` to eliminate false positive background clutter.
+- **EMA Temporal Smoothing**: Applies Exponential Moving Average (EMA, `α = 0.65`) across frames with `IoU > 0.30`, eliminating boundary jitter and quantization noise.
+- **Persistence Tracking**: Retains tracked faces for up to **3 frames (~100 ms)** during transient occlusion or fast head turns, completely preventing visible box flickering.
 - **NV12 Alignment**: All bounding box coordinates and sizes are aligned to even integers (`bx &= ~1; by &= ~1; bw &= ~1; bh &= ~1;`) to satisfy NV12 2x2 chroma subsampling constraints.
 
 ### 5. Embedded Self-Contained RTSP Server
@@ -151,7 +152,7 @@ smart-edge-camera/
 
 Tested live on **Luckfox Pico Pro** (Rockchip RV1106G3 @ 1.2GHz, SC3336 3MP sensor, Linux 5.10):
 
-| Component | Resolution / Format | Latency ($\Delta t$) | Throughput | Resource Usage |
+| Component | Resolution / Format | Latency (Δt) | Throughput | Resource Usage |
 | :--- | :--- | :---: | :---: | :---: |
 | **V4L2 Ingestion** | 1920x1080 NV12 | Continuous | **30.00 FPS** | 0% CPU (ISP3A) |
 | **MPP Main Encode** | 1080p H.264 CBR (2.5 Mbps) | ~4.2 ms | **30.00 FPS** | 0% CPU (VEPU) |
@@ -170,12 +171,12 @@ Tested live on **Luckfox Pico Pro** (Rockchip RV1106G3 @ 1.2GHz, SC3336 3MP sens
 ### Prerequisites
 - **Host OS**: Linux Ubuntu 20.04 / 22.04 LTS (x86_64)
 - **Cross Toolchain**: `arm-rockchip830-linux-uclibcgnueabihf` (included with Luckfox Pico SDK)
-- **CMake**: Version $\ge$ 3.16
+- **CMake**: Version >= 3.16
 
 ### Build Steps
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/smart-edge-camera.git
+git clone https://github.com/QuocHoang-git/smart-edge-camera.git
 cd smart-edge-camera
 
 # Compile application and all test binaries
