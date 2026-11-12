@@ -1,7 +1,6 @@
 # Smart Edge Camera Firmware: Systems Architecture Specification
 
 **Target Platform**: Luckfox Pico Pro (Rockchip RV1106G3 / RV1103, ARM Cortex-A7 @ 1.2GHz, NPU 0.5 TOPS, 128MB RAM)  
-**Target Organization**: Motorola Solutions - Specialty Cameras & Embedded Vision Firmware  
 **Standard**: C++17, POSIX Real-Time, Embedded Linux (`uClibc-ng`, Buildroot)  
 
 ---

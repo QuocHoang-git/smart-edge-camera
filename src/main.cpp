@@ -28,7 +28,6 @@ int main(int argc, char* argv[]) {
     std::cout << "==================================================================\n";
     std::cout << "  Smart Edge Camera - Dual-Stream & Edge Face Detection (24/7)    \n";
     std::cout << "  Platform: Rockchip RV1106 / RV1103 (Luckfox Pico Pro)           \n";
-    std::cout << "  Target: Motorola Solutions Firmware Specialization              \n";
     std::cout << "==================================================================\n";
 
     auto pipeline = std::make_shared<edge_camera::CameraPipeline>(config);
