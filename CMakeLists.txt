@@ -112,3 +112,37 @@ set_target_properties(smart_edge_camera PROPERTIES
 )
 
 install(TARGETS smart_edge_camera DESTINATION bin)
+
+# ==============================================================================
+# Unit & Integration Tests
+# ==============================================================================
+option(BUILD_TESTS "Build smart_edge_camera test suite" ON)
+
+if(BUILD_TESTS)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
+    macro(add_edge_test test_name test_src)
+        add_executable(${test_name} ${test_src})
+        target_compile_options(${test_name} PRIVATE ${COMMON_COMPILE_OPTIONS})
+        target_link_directories(${test_name} PRIVATE 
+            ${RGA_ROOT}/lib
+            ${MPP_ROOT}/lib
+            ${RKNN_LIB_DIR}
+        )
+        target_link_libraries(${test_name} PRIVATE ${ARGN} pthread)
+        set_target_properties(${test_name} PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "/oem/usr/lib:/usr/lib:/lib"
+        )
+    endmacro()
+
+    add_edge_test(test_bounded_queue tests/test_bounded_queue.cpp)
+    add_edge_test(test_dma_allocator tests/test_dma_allocator.cpp dma_core)
+    add_edge_test(test_rga_converter tests/test_rga_converter.cpp rga_core dma_core rga)
+    add_edge_test(test_v4l2_camera tests/test_v4l2_camera.cpp camera_core)
+    add_edge_test(test_mpp_encoder tests/test_mpp_encoder.cpp encoder_core dma_core rockchip_mpp)
+    add_edge_test(test_rknn_engine tests/test_rknn_engine.cpp npu_core dma_core rknnmrt)
+    add_edge_test(test_rtsp_server tests/test_rtsp_server.cpp rtsp_core)
+    add_edge_test(test_pipeline_logic tests/test_pipeline_logic.cpp)
+endif()
+
