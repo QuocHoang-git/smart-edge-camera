@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+Generate clean vector SVG architecture diagrams for Smart Edge Camera.
+"""
+
+def generate_hardware_pipeline_svg(filepath):
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 650" width="1000" height="650" style="background:#0d1117; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <defs>
+    <linearGradient id="gradBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1f6feb" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#093988" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="gradGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#238636" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#195424" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="gradPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8957e5" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#552299" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="gradOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d29922" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#8e5b00" stop-opacity="0.9"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#3fb950"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Title -->
+  <text x="500" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#f0f6fc">Smart Edge Camera: Dual-Stream Zero-Copy Pipeline</text>
+  <text x="500" y="65" text-anchor="middle" font-size="13" fill="#8b949e">Rockchip RV1103 (Cortex-A7 @ 1.2GHz, 64MB DDR2, 0.5 TOPS NPU) Hardware Flow</text>
+
+  <!-- Hardware Container -->
+  <rect x="30" y="90" width="940" height="530" rx="12" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="50" y="115" font-size="14" font-weight="600" fill="#58a6ff">Zero-Copy CMA Hardware Boundary (/dev/rk_dma_heap/rk-dma-heap-cma)</text>
+
+  <!-- Node 1: Sensor & ISP -->
+  <g transform="translate(60, 140)" filter="url(#shadow)">
+    <rect width="180" height="100" rx="8" fill="url(#gradBlue)" stroke="#388bfd" stroke-width="1"/>
+    <text x="90" y="32" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">SC3336 Sensor</text>
+    <text x="90" y="52" text-anchor="middle" font-size="12" fill="#c9d1d9">MIPI-CSI2 (2-lane)</text>
+    <text x="90" y="75" text-anchor="middle" font-size="11" fill="#79c0ff">+ Rockchip ISP3A</text>
+  </g>
+
+  <!-- Node 2: V4L2 Driver -->
+  <g transform="translate(290, 140)" filter="url(#shadow)">
+    <rect width="190" height="100" rx="8" fill="url(#gradBlue)" stroke="#388bfd" stroke-width="1"/>
+    <text x="95" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">V4L2 Ingestion</text>
+    <text x="95" y="50" text-anchor="middle" font-size="12" fill="#c9d1d9">/dev/video11</text>
+    <text x="95" y="70" text-anchor="middle" font-size="11" fill="#79c0ff">4x 1080p DMA-BUF</text>
+    <text x="95" y="86" text-anchor="middle" font-size="10" fill="#8b949e">1920x1080 NV12 @ 30fps</text>
+  </g>
+
+  <!-- Arrow Sensor -> V4L2 -->
+  <line x1="240" y1="190" x2="285" y2="190" stroke="#58a6ff" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Branch 1: Main Stream MPP -->
+  <g transform="translate(540, 140)" filter="url(#shadow)">
+    <rect width="190" height="100" rx="8" fill="url(#gradPurple)" stroke="#a371f7" stroke-width="1"/>
+    <text x="95" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">MPP Encoder (Main)</text>
+    <text x="95" y="50" text-anchor="middle" font-size="12" fill="#c9d1d9">Hardware VEPU chan=0</text>
+    <text x="95" y="70" text-anchor="middle" font-size="11" fill="#d2a8ff">1080p H.264 CBR</text>
+    <text x="95" y="86" text-anchor="middle" font-size="10" fill="#8b949e">2.5 Mbps, GOP=60</text>
+  </g>
+  <line x1="480" y1="190" x2="535" y2="190" stroke="#58a6ff" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Branch 2: RGA Sub-stream Downscale -->
+  <g transform="translate(290, 290)" filter="url(#shadow)">
+    <rect width="190" height="100" rx="8" fill="url(#gradOrange)" stroke="#e3b341" stroke-width="1"/>
+    <text x="95" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">RGA Blit #1: Downscale</text>
+    <text x="95" y="50" text-anchor="middle" font-size="12" fill="#c9d1d9">1080p -> 640x360 NV12</text>
+    <text x="95" y="70" text-anchor="middle" font-size="11" fill="#f0883e">Zero-Copy DMA to DMA</text>
+    <text x="95" y="86" text-anchor="middle" font-size="10" fill="#8b949e">Latency ~1.8 ms</text>
+  </g>
+  <line x1="385" y1="240" x2="385" y2="285" stroke="#58a6ff" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Branch 3: RGA Letterbox ROI -> NPU -->
+  <g transform="translate(60, 440)" filter="url(#shadow)">
+    <rect width="190" height="100" rx="8" fill="url(#gradOrange)" stroke="#e3b341" stroke-width="1"/>
+    <text x="95" y="28" text-anchor="middle" font-size="13" font-weight="bold" fill="#ffffff">RGA Blit #2: Letterbox</text>
+    <text x="95" y="48" text-anchor="middle" font-size="11" fill="#c9d1d9">640x360 -> 640x640 BGR</text>
+    <text x="95" y="68" text-anchor="middle" font-size="11" fill="#f0883e">140px Pad Top/Bottom</text>
+    <text x="95" y="86" text-anchor="middle" font-size="10" fill="#8b949e">Aspect Ratio 1:1 Preserved</text>
+  </g>
+  <path d="M 290 350 L 155 350 L 155 435" fill="none" stroke="#58a6ff" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Node: NPU RetinaFace -->
+  <g transform="translate(290, 440)" filter="url(#shadow)">
+    <rect width="190" height="100" rx="8" fill="url(#gradGreen)" stroke="#3fb950" stroke-width="1"/>
+    <text x="95" y="28" text-anchor="middle" font-size="13" font-weight="bold" fill="#ffffff">Rockchip NPU (RKNN)</text>
+    <text x="95" y="48" text-anchor="middle" font-size="11" fill="#c9d1d9">RetinaFace 640x640</text>
+    <text x="95" y="68" text-anchor="middle" font-size="11" fill="#7ee787">16800 Priors + EMA</text>
+    <text x="95" y="86" text-anchor="middle" font-size="10" fill="#8b949e">Latency: 29.8 ms (30 FPS)</text>
+  </g>
+  <line x1="250" y1="490" x2="285" y2="490" stroke="#58a6ff" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Node: OSD Burn-In RGA -->
+  <g transform="translate(540, 290)" filter="url(#shadow)">
+    <rect width="190" height="100" rx="8" fill="url(#gradOrange)" stroke="#e3b341" stroke-width="1"/>
+    <text x="95" y="28" text-anchor="middle" font-size="13" font-weight="bold" fill="#ffffff">RGA OSD Burn-In</text>
+    <text x="95" y="48" text-anchor="middle" font-size="11" fill="#c9d1d9">draw_rect_dma (Green Box)</text>
+    <text x="95" y="68" text-anchor="middle" font-size="11" fill="#f0883e">Even-Aligned Coordinates</text>
+    <text x="95" y="86" text-anchor="middle" font-size="10" fill="#8b949e">Latency ~0.4 ms</text>
+  </g>
+  <line x1="480" y1="340" x2="535" y2="340" stroke="#58a6ff" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <!-- NPU to OSD arrow -->
+  <path d="M 480 490 L 635 490 L 635 395" fill="none" stroke="#3fb950" stroke-width="2.5" stroke-dasharray="4 4" marker-end="url(#arrowGreen)"/>
+
+  <!-- Node: MPP Sub Encoder -->
+  <g transform="translate(540, 440)" filter="url(#shadow)">
+    <rect width="190" height="100" rx="8" fill="url(#gradPurple)" stroke="#a371f7" stroke-width="1"/>
+    <text x="95" y="28" text-anchor="middle" font-size="13" font-weight="bold" fill="#ffffff">MPP Encoder (Sub)</text>
+    <text x="95" y="48" text-anchor="middle" font-size="11" fill="#c9d1d9">Hardware VEPU chan=1</text>
+    <text x="95" y="68" text-anchor="middle" font-size="11" fill="#d2a8ff">640x360 H.264 CBR</text>
+    <text x="95" y="86" text-anchor="middle" font-size="10" fill="#8b949e">800 Kbps, with AI OSD</text>
+  </g>
+  <!-- OSD to MPP Sub: pass through -->
+  <path d="M 730 340 L 755 340 L 755 490 L 735 490" fill="none" stroke="#58a6ff" stroke-width="2"/>
+  <line x1="635" y1="390" x2="635" y2="435" stroke="#58a6ff" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Node: RTSP Server -->
+  <g transform="translate(780, 260)" filter="url(#shadow)">
+    <rect width="170" height="180" rx="8" fill="#21262d" stroke="#58a6ff" stroke-width="2"/>
+    <text x="85" y="32" text-anchor="middle" font-size="15" font-weight="bold" fill="#58a6ff">Embedded RTSP</text>
+    <text x="85" y="52" text-anchor="middle" font-size="12" fill="#c9d1d9">Port 554 (TCP/UDP)</text>
+    <line x1="15" y1="65" x2="155" y2="65" stroke="#30363d" stroke-width="1"/>
+    <text x="85" y="85" text-anchor="middle" font-size="12" font-weight="600" fill="#a371f7">/live/main</text>
+    <text x="85" y="102" text-anchor="middle" font-size="11" fill="#8b949e">1080p Clean Stream</text>
+    <text x="85" y="130" text-anchor="middle" font-size="12" font-weight="600" fill="#3fb950">/live/sub</text>
+    <text x="85" y="147" text-anchor="middle" font-size="11" fill="#8b949e">360p Stream + OSD</text>
+    <text x="85" y="168" text-anchor="middle" font-size="10" fill="#58a6ff">Zero-Copy RTP</text>
+  </g>
+
+  <!-- Connect MPP Main to RTSP -->
+  <path d="M 730 190 L 865 190 L 865 255" fill="none" stroke="#a371f7" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <!-- Connect MPP Sub to RTSP -->
+  <path d="M 730 490 L 865 490 L 865 445" fill="none" stroke="#a371f7" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+</svg>
+"""
+    with open(filepath, "w") as f:
+        f.write(svg)
+    print(f"Generated: {filepath}")
+
+def generate_letterbox_svg(filepath):
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" width="900" height="480" style="background:#0d1117; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#58a6ff"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="450" y="35" text-anchor="middle" font-size="20" font-weight="bold" fill="#f0f6fc">RGA Letterbox ROI &amp; RetinaFace Aspect Ratio Preservation</text>
+  <text x="450" y="58" text-anchor="middle" font-size="13" fill="#8b949e">Preventing 1.78x Vertical Facial Distortion on Rockchip RV1103 NPU</text>
+
+  <!-- Left: Source 640x360 NV12 -->
+  <g transform="translate(50, 90)">
+    <rect width="280" height="157" fill="#161b22" stroke="#58a6ff" stroke-width="2" rx="4"/>
+    <!-- Face sketch inside 16:9 -->
+    <ellipse cx="140" cy="78" rx="35" ry="45" fill="#238636" fill-opacity="0.3" stroke="#3fb950" stroke-width="2"/>
+    <text x="140" y="83" text-anchor="middle" font-size="11" fill="#7ee787">Natural Face (1:1)</text>
+    <text x="140" y="180" text-anchor="middle" font-size="13" font-weight="bold" fill="#58a6ff">Camera Sub-Stream</text>
+    <text x="140" y="198" text-anchor="middle" font-size="11" fill="#8b949e">640x360 NV12 (16:9)</text>
+  </g>
+
+  <!-- Middle Arrow -->
+  <g transform="translate(345, 160)">
+    <line x1="0" y1="0" x2="60" y2="0" stroke="#58a6ff" stroke-width="3" marker-end="url(#arrow)"/>
+    <text x="30" y="-12" text-anchor="middle" font-size="11" font-weight="600" fill="#f0883e">RGA improcess()</text>
+    <text x="30" y="20" text-anchor="middle" font-size="10" fill="#8b949e">Letterbox Blit</text>
+  </g>
+
+  <!-- Right: Destination 640x640 BGR888 -->
+  <g transform="translate(430, 90)">
+    <!-- 640x640 scaled to 280x280 -->
+    <rect width="280" height="280" fill="#0d1117" stroke="#30363d" stroke-width="2" rx="4"/>
+    
+    <!-- Top Black Bar (140px = 61.25px in display) -->
+    <rect x="0" y="0" width="280" height="61" fill="#000000" stroke="#f85149" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="140" y="35" text-anchor="middle" font-size="11" fill="#f85149">Top Pad: 140px Black Bar</text>
+    
+    <!-- Active Video Area (360px = 157.5px in display) -->
+    <rect x="0" y="61" width="280" height="158" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+    <ellipse cx="140" cy="140" rx="35" ry="45" fill="#238636" fill-opacity="0.3" stroke="#3fb950" stroke-width="2"/>
+    <rect x="100" y="90" width="80" height="100" fill="none" stroke="#e3b341" stroke-width="2" stroke-dasharray="4 4"/>
+    <text x="140" y="145" text-anchor="middle" font-size="11" fill="#7ee787">Undistorted Face</text>
+    
+    <!-- Bottom Black Bar (140px = 61.25px in display) -->
+    <rect x="0" y="219" width="280" height="61" fill="#000000" stroke="#f85149" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="140" y="254" text-anchor="middle" font-size="11" fill="#f85149">Bottom Pad: 140px Black Bar</text>
+
+    <text x="140" y="305" text-anchor="middle" font-size="13" font-weight="bold" fill="#3fb950">NPU Input Buffer</text>
+    <text x="140" y="323" text-anchor="middle" font-size="11" fill="#8b949e">640x640 BGR888 (1:1 Square)</text>
+  </g>
+
+  <!-- Formula Callout -->
+  <g transform="translate(100, 360)">
+    <rect width="700" height="85" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+    <text x="350" y="25" text-anchor="middle" font-size="13" font-weight="bold" fill="#58a6ff">Exact Coordinate Unpadding Formula</text>
+    <text x="350" y="48" text-anchor="middle" font-size="12" fill="#c9d1d9">X_sub = X_640,    Y_sub = Y_640 - 140px    (Clamped to [0, 360])</text>
+    <text x="350" y="70" text-anchor="middle" font-size="11" fill="#7ee787">EMA Filter: Box_t = 0.65 * Box_new + 0.35 * Box_{t-1} (IoU &gt; 0.30) | Persistence: 3 frames</text>
+  </g>
+</svg>
+"""
+    with open(filepath, "w") as f:
+        f.write(svg)
+    print(f"Generated: {filepath}")
+
+if __name__ == "__main__":
+    generate_hardware_pipeline_svg("docs/diagrams/hardware_pipeline.svg")
+    generate_letterbox_svg("docs/diagrams/letterbox_geometry.svg")

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" width="900" height="480" style="background:#0d1117; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#58a6ff"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="450" y="35" text-anchor="middle" font-size="20" font-weight="bold" fill="#f0f6fc">RGA Letterbox ROI &amp; RetinaFace Aspect Ratio Preservation</text>
+  <text x="450" y="58" text-anchor="middle" font-size="13" fill="#8b949e">Preventing 1.78x Vertical Facial Distortion on Rockchip RV1103 NPU</text>
+
+  <!-- Left: Source 640x360 NV12 -->
+  <g transform="translate(50, 90)">
+    <rect width="280" height="157" fill="#161b22" stroke="#58a6ff" stroke-width="2" rx="4"/>
+    <!-- Face sketch inside 16:9 -->
+    <ellipse cx="140" cy="78" rx="35" ry="45" fill="#238636" fill-opacity="0.3" stroke="#3fb950" stroke-width="2"/>
+    <text x="140" y="83" text-anchor="middle" font-size="11" fill="#7ee787">Natural Face (1:1)</text>
+    <text x="140" y="180" text-anchor="middle" font-size="13" font-weight="bold" fill="#58a6ff">Camera Sub-Stream</text>
+    <text x="140" y="198" text-anchor="middle" font-size="11" fill="#8b949e">640x360 NV12 (16:9)</text>
+  </g>
+
+  <!-- Middle Arrow -->
+  <g transform="translate(345, 160)">
+    <line x1="0" y1="0" x2="60" y2="0" stroke="#58a6ff" stroke-width="3" marker-end="url(#arrow)"/>
+    <text x="30" y="-12" text-anchor="middle" font-size="11" font-weight="600" fill="#f0883e">RGA improcess()</text>
+    <text x="30" y="20" text-anchor="middle" font-size="10" fill="#8b949e">Letterbox Blit</text>
+  </g>
+
+  <!-- Right: Destination 640x640 BGR888 -->
+  <g transform="translate(430, 90)">
+    <!-- 640x640 scaled to 280x280 -->
+    <rect width="280" height="280" fill="#0d1117" stroke="#30363d" stroke-width="2" rx="4"/>
+    
+    <!-- Top Black Bar (140px = 61.25px in display) -->
+    <rect x="0" y="0" width="280" height="61" fill="#000000" stroke="#f85149" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="140" y="35" text-anchor="middle" font-size="11" fill="#f85149">Top Pad: 140px Black Bar</text>
+    
+    <!-- Active Video Area (360px = 157.5px in display) -->
+    <rect x="0" y="61" width="280" height="158" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+    <ellipse cx="140" cy="140" rx="35" ry="45" fill="#238636" fill-opacity="0.3" stroke="#3fb950" stroke-width="2"/>
+    <rect x="100" y="90" width="80" height="100" fill="none" stroke="#e3b341" stroke-width="2" stroke-dasharray="4 4"/>
+    <text x="140" y="145" text-anchor="middle" font-size="11" fill="#7ee787">Undistorted Face</text>
+    
+    <!-- Bottom Black Bar (140px = 61.25px in display) -->
+    <rect x="0" y="219" width="280" height="61" fill="#000000" stroke="#f85149" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="140" y="254" text-anchor="middle" font-size="11" fill="#f85149">Bottom Pad: 140px Black Bar</text>
+
+    <text x="140" y="305" text-anchor="middle" font-size="13" font-weight="bold" fill="#3fb950">NPU Input Buffer</text>
+    <text x="140" y="323" text-anchor="middle" font-size="11" fill="#8b949e">640x640 BGR888 (1:1 Square)</text>
+  </g>
+
+  <!-- Formula Callout -->
+  <g transform="translate(100, 360)">
+    <rect width="700" height="85" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+    <text x="350" y="25" text-anchor="middle" font-size="13" font-weight="bold" fill="#58a6ff">Exact Coordinate Unpadding Formula</text>
+    <text x="350" y="48" text-anchor="middle" font-size="12" fill="#c9d1d9">X_sub = X_640,    Y_sub = Y_640 - 140px    (Clamped to [0, 360])</text>
+    <text x="350" y="70" text-anchor="middle" font-size="11" fill="#7ee787">EMA Filter: Box_t = 0.65 * Box_new + 0.35 * Box_{t-1} (IoU &gt; 0.30) | Persistence: 3 frames</text>
+  </g>
+</svg>

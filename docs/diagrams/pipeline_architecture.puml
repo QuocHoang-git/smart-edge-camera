@@ -1,54 +1,64 @@
 @startuml
 skinparam BoxPadding 10
 skinparam ParticipantPadding 10
+skinparam Shadowing false
+skinparam ArrowColor #1f6feb
 
-box "Kernel Space (Hardware & Subsystems)" #LightBlue
-participant "Sensor (SC3336)\nMIPI-CSI" as CSI
-participant "Rockchip ISP\n(rkisp_v7 / V4L2)" as ISP
-participant "Linux CMA Heap\n(/dev/rk_dma_heap)" as CMA
-participant "Rockchip RGA 2D\n(/dev/rga)" as RGA
-participant "Rockchip NPU\n(/dev/rknpu)" as NPU
+box "Hardware Acceleration Engines (RV1103 SoC)" #AliceBlue
+participant "Sensor (SC3336)\nMIPI-CSI2" as CSI
+participant "Rockchip ISP 3A\n(/dev/video11)" as ISP
+participant "RGA 2D Blitter\n(/dev/rga)" as RGA
+participant "NPU (RKNN)\n(/dev/rknpu)" as NPU
+participant "MPP Video Encoder\n(/dev/mpp_service)" as MPP
 end box
 
-box "User Space (Firmware Application)" #LightGreen
-participant "V4L2Camera\n(Producer Thread)" as PROD
-participant "BoundedQueue\n(Drop-Oldest)" as QUEUE
-participant "RknnEngine\n(Consumer Thread)" as CONS
+box "Userspace Smart Camera Firmware (C++17 POSIX)" #MintCream
+participant "Capture & Streamer\n(Thread #1 @ 30 FPS)" as STREAMER
+participant "BoundedQueue\n(Drop-Oldest Queue)" as QUEUE
+participant "AI Inference & Tracking\n(Thread #2 @ 30 FPS)" as AI_WORKER
+participant "Embedded RTSP Server\n(Port 554 TCP/UDP)" as RTSP
 end box
 
-== Initialization Phase ==
-PROD -> CMA : ioctl(DMA_HEAP_IOCTL_ALLOC, 16KB)\nAllocate Sub-Stream Buffer
-CMA --> PROD : Return DMA-BUF fd (fd=8)
-PROD -> ISP : ioctl(VIDIOC_REQBUFS & EXPBUF)\nExport 4x 1080p DMA-BUFs (fd=5..8)
-PROD -> NPU : rknn_create_mem_from_fd(fd=8)\nrknn_set_io_mem(input & NC1HWC2 outputs)
+== Zero-Copy Pipeline Initialization ==
+STREAMER -> ISP : VIDIOC_REQBUFS & EXPBUF (4x 1080p NV12 DMA-BUFs)
+STREAMER -> RGA : c_RkRgaInit()
+STREAMER -> MPP : mpp_init (Chan 0: 1080p CBR, Chan 1: 360p CBR)
+STREAMER -> RTSP : Start Server (/live/main, /live/sub)
+AI_WORKER -> NPU : Load RetinaFace (640x640x3 BGR888, 16800 Priors)
+AI_WORKER -> NPU : Bind DMA-BUF input via rknn_create_mem()
 
-== Real-Time Continuous Ingestion (25 FPS) ==
-loop Continuous Streaming (24/7)
+== Real-Time Continuous Streaming Loop (30 FPS) ==
+loop Every Frame (Interval = 33.3ms)
     CSI -> ISP : Raw Bayer Frame
-    ISP -> ISP : 3A Processing (AE/AWB/Denoise)
-    ISP -> PROD : ioctl(VIDIOC_DQBUF) -> Frame ready
-    
-    activate PROD
-    PROD -> RGA : imresize_t(src_handle, dst_handle)\nZero-copy Hardware Blit (NV12 -> Gray8)
-    activate RGA
-    RGA --> PROD : Hardware Blit Done (~3.3ms)
-    deactivate RGA
-    
-    PROD -> ISP : ioctl(VIDIOC_QBUF) -> Return 1080p buffer immediately
-    
-    PROD -> QUEUE : push(frame_seq) [Non-blocking, drop oldest]
-    deactivate PROD
-    
-    QUEUE -> CONS : pop(frame_seq)
-    activate CONS
-    CONS -> NPU : rknn_run(ctx)\nZero-Copy Inference on NPU
-    activate NPU
-    NPU --> CONS : BlazeFace Done (~3.3ms)
-    deactivate NPU
-    
-    opt Face Detected (Confidence > Threshold)
-        CONS -> CONS : Dispatch Security Alert Event
+    ISP -> ISP : Hardware 3A (Auto Exposure / AWB / Denoise)
+    ISP -> STREAMER : VIDIOC_DQBUF (1080p NV12 DMA-BUF)
+
+    group Parallel Hardware Execution
+        STREAMER -> RGA : Blit #1: Downscale 1080p -> 640x360 NV12 Sub-Stream
+        STREAMER -> MPP : Encode Chan 0 (1080p H.264 Main Packet)
+        MPP -> RTSP : Push /live/main Packet (RTP Stream)
+        STREAMER -> ISP : VIDIOC_QBUF (Return 1080p buffer immediately to camera pool)
+
+        STREAMER -> RGA : Blit #2: Letterbox ROI 640x360 -> 640x640 BGR (Pad 140px)
+        STREAMER -> QUEUE : push(frame_idx) [Non-blocking, drop-oldest]
+        
+        opt Previous AI Detections Available
+            STREAMER -> RGA : OSD Burn-In (draw_rect_dma green boxes on NV12)
+        end
+        
+        STREAMER -> MPP : Encode Chan 1 (640x360 H.264 Sub Packet with OSD)
+        MPP -> RTSP : Push /live/sub Packet (RTP Stream)
     end
-    deactivate CONS
+
+    QUEUE -> AI_WORKER : pop(frame_idx)
+    AI_WORKER -> NPU : rknn_run() [Zero-copy DMA input execution, ~29.8ms]
+    NPU --> AI_WORKER : Output Tensors [loc: 16800x4, conf: 16800x2, landm: 16800x10]
+    
+    AI_WORKER -> AI_WORKER : Decode 16800 priors with variances (0.1, 0.2)
+    AI_WORKER -> AI_WORKER : Suppress background logit & filter score >= 0.55
+    AI_WORKER -> AI_WORKER : Letterbox coordinate unpadding (Y_sub = Y_640 - 140)
+    AI_WORKER -> AI_WORKER : Non-Maximum Suppression (IoU > 0.30)
+    AI_WORKER -> AI_WORKER : EMA Smoothing (alpha=0.65) & Persistence Tracking (3 frames)
+    AI_WORKER -> STREAMER : Update active_boxes_ under mutex lock
 end
 @enduml
