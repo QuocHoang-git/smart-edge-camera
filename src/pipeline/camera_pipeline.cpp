@@ -9,6 +9,7 @@
 #include <iostream>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 
 namespace edge_camera {
@@ -42,11 +43,12 @@ bool CameraPipeline::init() {
     const auto& npu_input = npu_.input_attr();
     std::cout << "[INIT 2/6] Allocating CMA DMA-BUFs for Vision Pipeline...\n";
 
-    // AI input buffer (128x128 Gray8)
+    // AI input buffer (640x640 BGR888)
     if (!ai_dma_buffer_.allocate(npu_input.size)) {
         std::cerr << "[PIPELINE ERROR] Failed to allocate AI DMA buffer!\n";
         return false;
     }
+    std::memset(ai_dma_buffer_.data(), 0, npu_input.size);
 
     if (!npu_.bind_input_dma_buffer(ai_dma_buffer_.fd(), ai_dma_buffer_.data(), npu_input.size)) {
         std::cerr << "[PIPELINE ERROR] Binding DMA buffer to NPU failed!\n";
@@ -210,10 +212,12 @@ void CameraPipeline::capture_and_stream_loop() {
 
             // 4. Sub-Stream Vision Processing
             if (blit_sub_ok) {
-                // RGA Hardware Blit #2: Convert & Scale Sub Stream 640x360 NV12 -> 640x640 BGR888 for RetinaFace NPU
-                rga_.blit_dma_to_dma(
+                // RGA Hardware Blit #2: Aspect-Preserving Letterbox (640x360 NV12 -> 640x640 BGR888 with 140px pad)
+                int pad_y = (static_cast<int>(npu_input.height) - static_cast<int>(config_.sub_height)) / 2; // (640 - 360) / 2 = 140
+                rga_.blit_letterbox_dma_to_dma(
                     sub_stream_dma_.fd(), sub_stream_dma_.size(), config_.sub_width, config_.sub_height,
                     ai_dma_buffer_.fd(), ai_dma_buffer_.size(), npu_input.width, npu_input.height,
+                    pad_y, pad_y,
                     RK_FORMAT_BGR_888
                 );
 
@@ -228,6 +232,12 @@ void CameraPipeline::capture_and_stream_loop() {
                         int by = static_cast<int>(box.ymin * config_.sub_height);
                         int bw = static_cast<int>((box.xmax - box.xmin) * config_.sub_width);
                         int bh = static_cast<int>((box.ymax - box.ymin) * config_.sub_height);
+
+                        // Align to 2 for NV12 chroma subsampling compatibility
+                        bx &= ~1;
+                        by &= ~1;
+                        bw &= ~1;
+                        bh &= ~1;
 
                         // Clamp coordinates to safe frame boundaries
                         if (bx < 0) bx = 0;
@@ -343,10 +353,13 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
     float score_scale = score_attr->scale;
     int32_t score_zp = score_attr->zp;
 
-    constexpr float SCORE_THRESHOLD = 0.50f;
+    constexpr float SCORE_THRESHOLD = 0.55f;
     constexpr float IOU_THRESHOLD = 0.30f;
     constexpr int NUM_PRIORS = 16800;
     const float VARIANCES[2] = {0.1f, 0.2f};
+    constexpr float PAD_Y = 140.0f; // 140px letterbox top padding in 640x640 buffer
+    constexpr float SUB_W = 640.0f;
+    constexpr float SUB_H = 360.0f;
 
     std::vector<DetectionBox> candidates;
     candidates.reserve(32);
@@ -356,13 +369,15 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
 
     for (int i = 0; i < NUM_PRIORS; ++i) {
         // Output 1 is [16800, 2]: index i*2 is background, i*2 + 1 is face score
+        float bg_score = (static_cast<float>(score_data[i * 2 + 0]) - score_zp) * score_scale;
         float face_score = (static_cast<float>(score_data[i * 2 + 1]) - score_zp) * score_scale;
 
         if (face_score > max_score) {
             max_score = face_score;
         }
 
-        if (face_score < SCORE_THRESHOLD) continue;
+        // Must beat confidence threshold and exceed background logit
+        if (face_score < SCORE_THRESHOLD || face_score <= bg_score) continue;
         passing_count++;
 
         // Output 0 is [16800, 4]: bounding box offsets relative to prior
@@ -384,28 +399,37 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
         float box_w  = std::exp(dw * VARIANCES[1]) * prior_w;
         float box_h  = std::exp(dh * VARIANCES[1]) * prior_h;
 
+        // Bounding box in 640x640 pixel coordinates
+        float x1_640 = (box_cx - box_w * 0.5f) * 640.0f;
+        float y1_640 = (box_cy - box_h * 0.5f) * 640.0f;
+        float x2_640 = (box_cx + box_w * 0.5f) * 640.0f;
+        float y2_640 = (box_cy + box_h * 0.5f) * 640.0f;
+
+        // Map back to 640x360 sub-stream removing letterbox padding
+        float sub_x1 = std::max(0.0f, std::min(SUB_W, x1_640));
+        float sub_y1 = std::max(0.0f, std::min(SUB_H, y1_640 - PAD_Y));
+        float sub_x2 = std::max(0.0f, std::min(SUB_W, x2_640));
+        float sub_y2 = std::max(0.0f, std::min(SUB_H, y2_640 - PAD_Y));
+
+        if (sub_x2 <= sub_x1 + 6.0f || sub_y2 <= sub_y1 + 6.0f) continue;
+
         DetectionBox box;
         box.score = face_score;
-        box.xmin = std::max(0.0f, std::min(1.0f, box_cx - box_w * 0.5f));
-        box.ymin = std::max(0.0f, std::min(1.0f, box_cy - box_h * 0.5f));
-        box.xmax = std::max(0.0f, std::min(1.0f, box_cx + box_w * 0.5f));
-        box.ymax = std::max(0.0f, std::min(1.0f, box_cy + box_h * 0.5f));
+        box.xmin = sub_x1 / SUB_W;
+        box.ymin = sub_y1 / SUB_H;
+        box.xmax = sub_x2 / SUB_W;
+        box.ymax = sub_y2 / SUB_H;
 
-        if (box.xmax > box.xmin && box.ymax > box.ymin) {
-            candidates.push_back(box);
-        }
+        candidates.push_back(box);
     }
 
     static uint32_t log_throttle = 0;
     if (++log_throttle % 60 == 0) {
         std::cout << "[RETINAFACE DEBUG] Max Face Score=" << max_score 
-                  << " (raw=" << static_cast<int>(score_data[1]) 
-                  << ", zp=" << score_zp << ", scale=" << score_scale << ")"
                   << ", Passing (>=" << SCORE_THRESHOLD << ")=" << passing_count 
-                  << ", Candidates=" << candidates.size() << std::endl;
+                  << ", Candidates=" << candidates.size() 
+                  << ", Tracked=" << tracked_faces_.size() << std::endl;
     }
-
-    if (candidates.empty()) return;
 
     // Sort by confidence descending
     std::sort(candidates.begin(), candidates.end(), [](const DetectionBox& a, const DetectionBox& b) {
@@ -413,9 +437,11 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
     });
 
     // Non-Maximum Suppression (NMS)
+    std::vector<DetectionBox> nms_boxes;
+    nms_boxes.reserve(8);
     for (const auto& cand : candidates) {
         bool keep = true;
-        for (const auto& chosen : boxes) {
+        for (const auto& chosen : nms_boxes) {
             float x1 = std::max(cand.xmin, chosen.xmin);
             float y1 = std::max(cand.ymin, chosen.ymin);
             float x2 = std::min(cand.xmax, chosen.xmax);
@@ -435,8 +461,70 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
             }
         }
         if (keep) {
-            boxes.push_back(cand);
-            if (boxes.size() >= 8) break; // Keep at most top 8 detected faces
+            nms_boxes.push_back(cand);
+            if (nms_boxes.size() >= 8) break; // Keep at most top 8 detected faces
+        }
+    }
+
+    // Temporal Smoothing (EMA) and Persistence Tracking
+    std::vector<bool> matched(nms_boxes.size(), false);
+    for (auto& tracked : tracked_faces_) {
+        float best_iou = 0.0f;
+        int best_idx = -1;
+
+        for (size_t i = 0; i < nms_boxes.size(); ++i) {
+            if (matched[i]) continue;
+            float x1 = std::max(tracked.box.xmin, nms_boxes[i].xmin);
+            float y1 = std::max(tracked.box.ymin, nms_boxes[i].ymin);
+            float x2 = std::min(tracked.box.xmax, nms_boxes[i].xmax);
+            float y2 = std::min(tracked.box.ymax, nms_boxes[i].ymax);
+
+            float inter_w = std::max(0.0f, x2 - x1);
+            float inter_h = std::max(0.0f, y2 - y1);
+            float inter_area = inter_w * inter_h;
+
+            float area_t = (tracked.box.xmax - tracked.box.xmin) * (tracked.box.ymax - tracked.box.ymin);
+            float area_n = (nms_boxes[i].xmax - nms_boxes[i].xmin) * (nms_boxes[i].ymax - nms_boxes[i].ymin);
+            float union_area = area_t + area_n - inter_area;
+            float iou = (union_area > 0.0f) ? (inter_area / union_area) : 0.0f;
+
+            if (iou > best_iou) {
+                best_iou = iou;
+                best_idx = static_cast<int>(i);
+            }
+        }
+
+        if (best_iou > 0.30f && best_idx >= 0) {
+            // Smooth coordinates with EMA filter (65% new, 35% history)
+            constexpr float ALPHA = 0.65f;
+            const auto& det = nms_boxes[best_idx];
+            tracked.box.xmin = ALPHA * det.xmin + (1.0f - ALPHA) * tracked.box.xmin;
+            tracked.box.ymin = ALPHA * det.ymin + (1.0f - ALPHA) * tracked.box.ymin;
+            tracked.box.xmax = ALPHA * det.xmax + (1.0f - ALPHA) * tracked.box.xmax;
+            tracked.box.ymax = ALPHA * det.ymax + (1.0f - ALPHA) * tracked.box.ymax;
+            tracked.box.score = det.score;
+            tracked.lost_frames = 0;
+            matched[best_idx] = true;
+        } else {
+            tracked.lost_frames++;
+        }
+    }
+
+    // Add new unmatched detections
+    for (size_t i = 0; i < nms_boxes.size(); ++i) {
+        if (!matched[i]) {
+            tracked_faces_.push_back({nms_boxes[i], 0});
+        }
+    }
+
+    // Retain only valid tracked faces (persist through up to 3 lost frames to prevent flicker)
+    auto it = tracked_faces_.begin();
+    while (it != tracked_faces_.end()) {
+        if (it->lost_frames > 3) {
+            it = tracked_faces_.erase(it);
+        } else {
+            boxes.push_back(it->box);
+            ++it;
         }
     }
 }

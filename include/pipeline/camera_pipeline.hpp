@@ -100,6 +100,12 @@ private:
     std::mutex detections_mutex_;
     std::vector<DetectionBox> active_boxes_;
 
+    struct TrackedBox {
+        DetectionBox box;
+        int lost_frames{0};
+    };
+    std::vector<TrackedBox> tracked_faces_;
+
     std::thread capture_thread_;
     std::thread ai_thread_;
 };

@@ -92,6 +92,60 @@ bool RgaConverter::blit_dma_to_dma(
     return true;
 }
 
+bool RgaConverter::blit_letterbox_dma_to_dma(
+    int src_fd, size_t src_size, uint32_t src_w, uint32_t src_h,
+    int dst_fd, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
+    int dst_pad_top, int dst_pad_bottom,
+    int dst_format)
+{
+    if (!is_initialized_) {
+        std::cerr << "[RGA ERROR] RGA converter not initialized!\n";
+        return false;
+    }
+
+    if (src_fd < 0 || dst_fd < 0) {
+        return false;
+    }
+
+    rga_buffer_handle_t src_handle = importbuffer_fd(src_fd, static_cast<int>(src_size));
+    if (src_handle == 0) return false;
+
+    rga_buffer_handle_t dst_handle = importbuffer_fd(dst_fd, static_cast<int>(dst_size));
+    if (dst_handle == 0) {
+        releasebuffer_handle(src_handle);
+        return false;
+    }
+
+    rga_buffer_t src = wrapbuffer_handle(
+        src_handle,
+        static_cast<int>(src_w),
+        static_cast<int>(src_h),
+        RK_FORMAT_YCbCr_420_SP
+    );
+
+    rga_buffer_t dst = wrapbuffer_handle(
+        dst_handle,
+        static_cast<int>(dst_w),
+        static_cast<int>(dst_h),
+        dst_format
+    );
+
+    im_rect srect = {0, 0, static_cast<int>(src_w), static_cast<int>(src_h)};
+    im_rect drect = {0, dst_pad_top, static_cast<int>(dst_w), static_cast<int>(dst_h - dst_pad_top - dst_pad_bottom)};
+
+    IM_STATUS ret = improcess(src, dst, {}, srect, drect, {}, IM_SYNC);
+
+    releasebuffer_handle(src_handle);
+    releasebuffer_handle(dst_handle);
+
+    if (ret != IM_STATUS_SUCCESS) {
+        std::cerr << "[RGA ERROR] blit_letterbox improcess failed with code: " << static_cast<int>(ret) << "\n";
+        return false;
+    }
+
+    return true;
+}
+
 bool RgaConverter::draw_rect_dma(
     int dst_fd, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
     int x, int y, int w, int h, int thickness,
@@ -119,11 +173,18 @@ bool RgaConverter::draw_rect_dma(
     int x2 = std::min(static_cast<int>(dst_w), x + w);
     int y2 = std::min(static_cast<int>(dst_h), y + h);
 
+    // Align to 2 for NV12 chroma subsampling compatibility
+    x1 &= ~1;
+    y1 &= ~1;
+    x2 &= ~1;
+    y2 &= ~1;
+
     int rect_w = x2 - x1;
     int rect_h = y2 - y1;
     int t = std::min(thickness, std::min(rect_w, rect_h));
+    t = (t < 2) ? 2 : (t & ~1); // ensure thickness is even and >= 2
 
-    if (rect_w > 0 && rect_h > 0 && t > 0) {
+    if (rect_w > 4 && rect_h > 4) {
         // Draw 4 borders: Top, Bottom, Left, Right
         im_rect top = {x1, y1, rect_w, t};
         im_rect bottom = {x1, y2 - t, rect_w, t};

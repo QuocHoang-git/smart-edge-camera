@@ -45,6 +45,17 @@ public:
     );
 
     /**
+     * @brief Zero-Copy Hardware Letterbox Blit: scales src (640x360 NV12) into a centered ROI
+     *        inside dst (640x640 BGR888), preserving 1:1 aspect ratio with top/bottom padding.
+     */
+    bool blit_letterbox_dma_to_dma(
+        int src_fd, size_t src_size, uint32_t src_w, uint32_t src_h,
+        int dst_fd, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
+        int dst_pad_top, int dst_pad_bottom,
+        int dst_format = RK_FORMAT_BGR_888
+    );
+
+    /**
      * @brief Zero-Copy Hardware Drawing of a Bounding Box Rectangle into DMA-BUF.
      * 
      * @param dst_fd Destination CMA DMA-BUF descriptor (e.g. Sub-stream NV12)
