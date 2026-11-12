@@ -23,7 +23,7 @@ namespace edge_camera {
 
 struct CameraConfig {
     std::string video_device{"/dev/video11"};
-    std::string model_path{"/tmp/face_detection_rv1106.rknn"};
+    std::string model_path{"/userdata/retinaface.rknn"};
     uint32_t main_width{1920};
     uint32_t main_height{1080};
     uint32_t sub_width{640};

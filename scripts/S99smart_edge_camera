@@ -7,7 +7,7 @@
 DAEMON="/usr/bin/smart_edge_camera"
 NAME="smart_edge_camera"
 VIDEO_DEV="/dev/video11"
-MODEL_PATH="/userdata/face_detection_rv1106.rknn"
+MODEL_PATH="/userdata/retinaface.rknn"
 
 [ -x "$DAEMON" ] || exit 0
 [ -f "$MODEL_PATH" ] || exit 0

@@ -98,8 +98,6 @@ bool RknnEngine::init(const std::string& model_path) {
     // Allocate and attach memory for all output tensors
     output_mems_.resize(io_num_.n_output, nullptr);
     for (uint32_t i = 0; i < io_num_.n_output; ++i) {
-        output_attrs_[i].pass_through = 1;
-        output_attrs_[i].fmt = RKNN_TENSOR_NC1HWC2; // RV1103 native hardware layout
         uint32_t alloc_size = output_attrs_[i].size_with_stride > 0 ? output_attrs_[i].size_with_stride : output_attrs_[i].size;
 
         output_mems_[i] = rknn_create_mem(ctx_, alloc_size);
@@ -137,41 +135,50 @@ bool RknnEngine::query_model_attributes() {
         return false;
     }
 
-    // Query Input Attributes
+    // Query Input Attributes using native query
     std::memset(&input_raw_attr_, 0, sizeof(input_raw_attr_));
     input_raw_attr_.index = 0;
-    ret = rknn_query(ctx_, RKNN_QUERY_INPUT_ATTR, &input_raw_attr_, sizeof(input_raw_attr_));
+    ret = rknn_query(ctx_, RKNN_QUERY_NATIVE_INPUT_ATTR, &input_raw_attr_, sizeof(input_raw_attr_));
+    if (ret != RKNN_SUCC) {
+        ret = rknn_query(ctx_, RKNN_QUERY_INPUT_ATTR, &input_raw_attr_, sizeof(input_raw_attr_));
+    }
     if (ret < 0) {
         std::cerr << "[RKNN ERROR] Query input attr failed: " << ret << "\n";
         return false;
     }
 
+    // Default configuration for zero-copy vision pipeline on RV1106:
+    // UINT8 input with NHWC format lets the NPU handle normalization and layout internally
+    input_raw_attr_.type = RKNN_TENSOR_UINT8;
+    input_raw_attr_.fmt = RKNN_TENSOR_NHWC;
+
     input_attr_.width = input_raw_attr_.dims[2];
     input_attr_.height = input_raw_attr_.dims[1];
     input_attr_.channels = input_raw_attr_.dims[3];
-    input_attr_.size = input_raw_attr_.size;
+    input_attr_.size = input_raw_attr_.size_with_stride > 0 ? input_raw_attr_.size_with_stride : input_raw_attr_.size;
     input_attr_.format = input_raw_attr_.fmt;
     input_attr_.type = input_raw_attr_.type;
-
-    // Use pass_through = 1 so NPU accepts raw DMA buffer without conversion
-    input_raw_attr_.pass_through = 1;
 
     std::cout << "[RKNN INFO] Input Tensor [0]: " 
               << input_raw_attr_.name << " (" 
               << input_attr_.width << "x" << input_attr_.height << "x" << input_attr_.channels 
-              << ", size=" << input_attr_.size << " bytes)\n";
+              << ", stride_size=" << input_attr_.size << " bytes)\n";
 
-    // Query Output Attributes
+    // Query Output Attributes using native NHWC query
     output_attrs_.resize(io_num_.n_output);
     for (uint32_t i = 0; i < io_num_.n_output; ++i) {
         std::memset(&output_attrs_[i], 0, sizeof(rknn_tensor_attr));
         output_attrs_[i].index = i;
-        ret = rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &output_attrs_[i], sizeof(rknn_tensor_attr));
+        ret = rknn_query(ctx_, RKNN_QUERY_NATIVE_NHWC_OUTPUT_ATTR, &output_attrs_[i], sizeof(rknn_tensor_attr));
+        if (ret != RKNN_SUCC) {
+            ret = rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &output_attrs_[i], sizeof(rknn_tensor_attr));
+        }
         if (ret == 0) {
             std::cout << "  -> Output Tensor [" << i << "]: " 
                       << output_attrs_[i].name << " (" 
                       << output_attrs_[i].n_dims << " dims, size=" 
-                      << output_attrs_[i].size << " bytes)\n";
+                      << output_attrs_[i].size << ", stride_size=" 
+                      << output_attrs_[i].size_with_stride << " bytes)\n";
         }
     }
 

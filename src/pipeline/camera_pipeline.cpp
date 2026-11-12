@@ -1,9 +1,10 @@
 /**
  * @file camera_pipeline.cpp
- * @brief Multi-threaded production camera pipeline with Dual-Stream H.264 Hardware Encoding & RTSP.
+ * @brief Multi-threaded production camera pipeline with Dual-Stream H.264 Hardware Encoding, RTSP & RetinaFace NPU.
  */
 
 #include "pipeline/camera_pipeline.hpp"
+#include "pipeline/rknn_box_priors.h"
 
 #include <iostream>
 #include <chrono>
@@ -19,36 +20,7 @@ CameraPipeline::CameraPipeline(CameraConfig config)
 }
 
 void CameraPipeline::init_anchors() {
-    anchors_.clear();
-    anchors_.reserve(896);
-
-    // Layer 1: Stride 8, 16x16 feature map, 2 anchors per cell -> 512 anchors
-    for (int y = 0; y < 16; ++y) {
-        for (int x = 0; x < 16; ++x) {
-            for (int a = 0; a < 2; ++a) {
-                Anchor anc;
-                anc.x_center = (x + 0.5f) * 8.0f / 128.0f;
-                anc.y_center = (y + 0.5f) * 8.0f / 128.0f;
-                anc.w = 1.0f;
-                anc.h = 1.0f;
-                anchors_.push_back(anc);
-            }
-        }
-    }
-
-    // Layer 2: Stride 16, 8x8 feature map, 6 anchors per cell -> 384 anchors
-    for (int y = 0; y < 8; ++y) {
-        for (int x = 0; x < 8; ++x) {
-            for (int a = 0; a < 6; ++a) {
-                Anchor anc;
-                anc.x_center = (x + 0.5f) * 16.0f / 128.0f;
-                anc.y_center = (y + 0.5f) * 16.0f / 128.0f;
-                anc.w = 1.0f;
-                anc.h = 1.0f;
-                anchors_.push_back(anc);
-            }
-        }
-    }
+    // RetinaFace uses BOX_PRIORS_640 directly
 }
 
 CameraPipeline::~CameraPipeline() {
@@ -238,14 +210,14 @@ void CameraPipeline::capture_and_stream_loop() {
 
             // 4. Sub-Stream Vision Processing
             if (blit_sub_ok) {
-                // RGA Hardware Blit #2: Downscale 640x360 NV12 -> 128x128 Gray8 for NPU
+                // RGA Hardware Blit #2: Convert & Scale Sub Stream 640x360 NV12 -> 640x640 BGR888 for RetinaFace NPU
                 rga_.blit_dma_to_dma(
                     sub_stream_dma_.fd(), sub_stream_dma_.size(), config_.sub_width, config_.sub_height,
                     ai_dma_buffer_.fd(), ai_dma_buffer_.size(), npu_input.width, npu_input.height,
-                    RK_FORMAT_YCbCr_400
+                    RK_FORMAT_BGR_888
                 );
 
-                // Signal AI worker to process 128x128 frame non-blockingly
+                // Signal AI worker to process 640x640 frame non-blockingly
                 ai_trigger_queue_.push(frame_index);
 
                 // OSD Burn-In: Draw Face Detection Bounding Boxes onto Sub Stream NV12
@@ -338,7 +310,7 @@ void CameraPipeline::ai_worker_loop() {
                 double elapsed_sec = std::chrono::duration<double>(now - last_ai_tp).count();
                 if (elapsed_sec >= 2.0) {
                     double current_ai_fps = static_cast<double>(ai_counter) / elapsed_sec;
-                    std::cout << "  [AI NPU] BlazeFace Tracking: " << current_ai_fps << " FPS"
+                    std::cout << "  [AI NPU] RetinaFace Tracking: " << current_ai_fps << " FPS"
                               << " | Latency: " << inference_ms << " ms"
                               << " | Active Boxes: " << active_boxes_.size() << std::endl;
                     ai_counter = 0;
@@ -354,7 +326,7 @@ void CameraPipeline::ai_worker_loop() {
 void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
     boxes.clear();
 
-    if (npu_.output_count() < 2 || anchors_.size() != 896) return;
+    if (npu_.output_count() < 3) return;
 
     const void* loc_ptr = npu_.output_data(0);
     const rknn_tensor_attr* loc_attr = npu_.output_attr(0);
@@ -371,50 +343,66 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
     float score_scale = score_attr->scale;
     int32_t score_zp = score_attr->zp;
 
-    constexpr float SCORE_THRESHOLD = 0.30f;
+    constexpr float SCORE_THRESHOLD = 0.50f;
     constexpr float IOU_THRESHOLD = 0.30f;
+    constexpr int NUM_PRIORS = 16800;
+    const float VARIANCES[2] = {0.1f, 0.2f};
 
     std::vector<DetectionBox> candidates;
+    candidates.reserve(32);
 
-    for (size_t i = 0; i < 896; ++i) {
-        float logit = (static_cast<float>(score_data[i]) - score_zp) * score_scale;
-        float prob = 1.0f / (1.0f + std::exp(-logit));
+    float max_score = 0.0f;
+    int passing_count = 0;
 
-        if (prob < SCORE_THRESHOLD) continue;
+    for (int i = 0; i < NUM_PRIORS; ++i) {
+        // Output 1 is [16800, 2]: index i*2 is background, i*2 + 1 is face score
+        float face_score = (static_cast<float>(score_data[i * 2 + 1]) - score_zp) * score_scale;
 
-        const auto& anc = anchors_[i];
+        if (face_score > max_score) {
+            max_score = face_score;
+        }
 
-        // In RV1103 NC1HWC2 hardware layout for [1, 896, 14, 1]:
-        // Channel block c1 = i / 16, c2 = i % 16, height coordinate = j (0..13)
-        // Memory offset = ((c1 * 14) + j) * 16 + c2
-        size_t c1 = i / 16;
-        size_t c2 = i % 16;
-        auto get_loc = [&](size_t j) -> float {
-            size_t offset = (c1 * 14 + j) * 16 + c2;
-            return (static_cast<float>(loc_data[offset]) - loc_zp) * loc_scale;
-        };
+        if (face_score < SCORE_THRESHOLD) continue;
+        passing_count++;
 
-        float dx = get_loc(0);
-        float dy = get_loc(1);
-        float dw = get_loc(2);
-        float dh = get_loc(3);
+        // Output 0 is [16800, 4]: bounding box offsets relative to prior
+        int offset = i * 4;
+        float dx = (static_cast<float>(loc_data[offset + 0]) - loc_zp) * loc_scale;
+        float dy = (static_cast<float>(loc_data[offset + 1]) - loc_zp) * loc_scale;
+        float dw = (static_cast<float>(loc_data[offset + 2]) - loc_zp) * loc_scale;
+        float dh = (static_cast<float>(loc_data[offset + 3]) - loc_zp) * loc_scale;
 
-        // BlazeFace center/scale regression mapping
-        float cx = (dx / 128.0f) * anc.w + anc.x_center;
-        float cy = (dy / 128.0f) * anc.h + anc.y_center;
-        float w  = (dw / 128.0f) * anc.w;
-        float h  = (dh / 128.0f) * anc.h;
+        const float* prior = BOX_PRIORS_640[i];
+        float prior_cx = prior[0];
+        float prior_cy = prior[1];
+        float prior_w  = prior[2];
+        float prior_h  = prior[3];
+
+        // SSD / RetinaFace variance regression formula
+        float box_cx = dx * VARIANCES[0] * prior_w + prior_cx;
+        float box_cy = dy * VARIANCES[0] * prior_h + prior_cy;
+        float box_w  = std::exp(dw * VARIANCES[1]) * prior_w;
+        float box_h  = std::exp(dh * VARIANCES[1]) * prior_h;
 
         DetectionBox box;
-        box.score = prob;
-        box.xmin = std::max(0.0f, std::min(1.0f, cx - w * 0.5f));
-        box.ymin = std::max(0.0f, std::min(1.0f, cy - h * 0.5f));
-        box.xmax = std::max(0.0f, std::min(1.0f, cx + w * 0.5f));
-        box.ymax = std::max(0.0f, std::min(1.0f, cy + h * 0.5f));
+        box.score = face_score;
+        box.xmin = std::max(0.0f, std::min(1.0f, box_cx - box_w * 0.5f));
+        box.ymin = std::max(0.0f, std::min(1.0f, box_cy - box_h * 0.5f));
+        box.xmax = std::max(0.0f, std::min(1.0f, box_cx + box_w * 0.5f));
+        box.ymax = std::max(0.0f, std::min(1.0f, box_cy + box_h * 0.5f));
 
         if (box.xmax > box.xmin && box.ymax > box.ymin) {
             candidates.push_back(box);
         }
+    }
+
+    static uint32_t log_throttle = 0;
+    if (++log_throttle % 60 == 0) {
+        std::cout << "[RETINAFACE DEBUG] Max Face Score=" << max_score 
+                  << " (raw=" << static_cast<int>(score_data[1]) 
+                  << ", zp=" << score_zp << ", scale=" << score_scale << ")"
+                  << ", Passing (>=" << SCORE_THRESHOLD << ")=" << passing_count 
+                  << ", Candidates=" << candidates.size() << std::endl;
     }
 
     if (candidates.empty()) return;
@@ -448,7 +436,7 @@ void CameraPipeline::detect_faces(std::vector<DetectionBox>& boxes) {
         }
         if (keep) {
             boxes.push_back(cand);
-            if (boxes.size() >= 4) break; // Keep at most top 4 detected faces
+            if (boxes.size() >= 8) break; // Keep at most top 8 detected faces
         }
     }
 }
