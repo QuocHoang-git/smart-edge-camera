@@ -42,7 +42,7 @@ TEST_CASE(mpp_encode_dma_frame) {
 
     for (int i = 0; i < 3; ++i) {
         uint64_t pts = i * 33333;
-        camera::EncodedPacket pkt;
+        edge_camera::EncodedPacket pkt;
         bool ok = encoder.encode_dma(dma.fd(), frame_bytes, pts, pkt);
         ASSERT_TRUE(ok);
         ASSERT_GE(pkt.data.size(), 16); // Non-empty H.264 stream

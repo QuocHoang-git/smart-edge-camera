@@ -7,6 +7,8 @@
 #include <memory>
 #include <functional>
 
+#include "pipeline/pipeline_types.hpp"
+
 // Forward declarations for Rockchip MPP opaque pointers
 typedef void* MppCtx;
 struct MppApi_t;
@@ -17,12 +19,6 @@ typedef void* MppFrame;
 typedef void* MppPacket;
 
 namespace camera {
-
-struct EncodedPacket {
-    std::vector<uint8_t> data;
-    bool is_keyframe{false};
-    uint64_t pts_us{0};
-};
 
 struct MppEncoderConfig {
     uint32_t width{1920};
@@ -70,7 +66,7 @@ public:
      * @param[out] out_packet Container for the resulting NAL units.
      * @return true if encoding succeeded and packet was generated.
      */
-    bool encode_dma(int dma_fd, size_t size, uint64_t pts_us, EncodedPacket& out_packet);
+    bool encode_dma(int dma_fd, size_t size, uint64_t pts_us, edge_camera::EncodedPacket& out_packet);
 
     /**
      * @brief Encode an NV12 frame from a virtual memory buffer.
@@ -80,7 +76,7 @@ public:
      * @param[out] out_packet Container for the resulting NAL units.
      * @return true on success.
      */
-    bool encode_buffer(void* vir_addr, size_t size, uint64_t pts_us, EncodedPacket& out_packet);
+    bool encode_buffer(void* vir_addr, size_t size, uint64_t pts_us, edge_camera::EncodedPacket& out_packet);
 
     [[nodiscard]] const MppEncoderConfig& get_config() const noexcept { return config_; }
 

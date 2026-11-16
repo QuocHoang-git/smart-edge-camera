@@ -167,7 +167,7 @@ std::vector<uint8_t> MppEncoder::get_header() {
     return header_cache_;
 }
 
-bool MppEncoder::encode_dma(int dma_fd, size_t size, uint64_t pts_us, EncodedPacket& out_packet) {
+bool MppEncoder::encode_dma(int dma_fd, size_t size, uint64_t pts_us, edge_camera::EncodedPacket& out_packet) {
     if (!initialized_ || dma_fd < 0) {
         return false;
     }
@@ -340,7 +340,7 @@ bool MppEncoder::encode_dma(int dma_fd, size_t size, uint64_t pts_us, EncodedPac
     return true;
 }
 
-bool MppEncoder::encode_buffer(void* vir_addr, size_t size, uint64_t pts_us, EncodedPacket& out_packet) {
+bool MppEncoder::encode_buffer(void* vir_addr, size_t size, uint64_t pts_us, edge_camera::EncodedPacket& out_packet) {
     if (!initialized_ || !vir_addr) {
         return false;
     }

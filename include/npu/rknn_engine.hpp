@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "pipeline/pipeline_types.hpp"
+
 namespace edge_camera {
 
 struct NpuTensorAttr {
@@ -21,14 +23,6 @@ struct NpuTensorAttr {
     uint32_t size{0};
     rknn_tensor_format format{RKNN_TENSOR_NHWC};
     rknn_tensor_type type{RKNN_TENSOR_UINT8};
-};
-
-struct DetectionBox {
-    float xmin{0.0f};
-    float ymin{0.0f};
-    float xmax{0.0f};
-    float ymax{0.0f};
-    float score{0.0f};
 };
 
 class RknnEngine {

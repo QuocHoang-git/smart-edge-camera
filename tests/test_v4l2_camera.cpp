@@ -28,11 +28,11 @@ TEST_CASE(camera_stream_capture_frames) {
     ASSERT_TRUE(cam.start_stream());
 
     for (int i = 0; i < 5; ++i) {
-        edge_camera::FrameBuffer frame;
+        edge_camera::VideoFrame frame;
         bool dequeued = cam.dequeue_frame(frame, 1500);
         ASSERT_TRUE(dequeued);
         ASSERT_GE(frame.dma_fd, 0);
-        ASSERT_GE(frame.length, 1920 * 1080);
+        ASSERT_GE(frame.size, 1920 * 1080);
 
         ASSERT_TRUE(cam.enqueue_frame(frame));
     }

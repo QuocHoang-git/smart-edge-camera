@@ -106,27 +106,26 @@ bool V4L2Camera::query_capabilities() {
 }
 
 bool V4L2Camera::setup_format() {
-    struct v4l2_format fmt;
-    std::memset(&fmt, 0, sizeof(fmt));
+    std::memset(&fmt_, 0, sizeof(fmt_));
 
-    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-    fmt.fmt.pix_mp.width = width_;
-    fmt.fmt.pix_mp.height = height_;
-    fmt.fmt.pix_mp.pixelformat = pixel_format_;
-    fmt.fmt.pix_mp.field = V4L2_FIELD_NONE;
-    fmt.fmt.pix_mp.num_planes = 1;
+    fmt_.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    fmt_.fmt.pix_mp.width = width_;
+    fmt_.fmt.pix_mp.height = height_;
+    fmt_.fmt.pix_mp.pixelformat = pixel_format_;
+    fmt_.fmt.pix_mp.field = V4L2_FIELD_NONE;
+    fmt_.fmt.pix_mp.num_planes = 1;
 
-    if (ioctl(fd_, VIDIOC_S_FMT, &fmt) < 0) {
+    if (ioctl(fd_, VIDIOC_S_FMT, &fmt_) < 0) {
         std::cerr << "[V4L2 ERROR] VIDIOC_S_FMT failed: " << std::strerror(errno) << "\n";
         return false;
     }
 
     // Verify negotiated format
-    width_ = fmt.fmt.pix_mp.width;
-    height_ = fmt.fmt.pix_mp.height;
+    width_ = fmt_.fmt.pix_mp.width;
+    height_ = fmt_.fmt.pix_mp.height;
     std::cout << "[V4L2 INFO] Negotiated Format: " << width_ << "x" << height_ 
-              << ", BytesPerLine: " << fmt.fmt.pix_mp.plane_fmt[0].bytesperline
-              << ", SizeImage: " << fmt.fmt.pix_mp.plane_fmt[0].sizeimage << "\n";
+              << ", BytesPerLine: " << fmt_.fmt.pix_mp.plane_fmt[0].bytesperline
+              << ", SizeImage: " << fmt_.fmt.pix_mp.plane_fmt[0].sizeimage << "\n";
 
     return true;
 }
@@ -183,9 +182,16 @@ bool V4L2Camera::request_and_mmap_buffers(uint32_t buffer_count) {
             return false;
         }
 
-        buffers_[i].start = start;
-        buffers_[i].length = planes[0].length;
-        buffers_[i].index = i;
+        buffers_[i].vir_addr = start;
+        buffers_[i].size = planes[0].length;
+        buffers_[i].buffer_index = i;
+
+        buffers_[i].width = fmt_.fmt.pix_mp.width;
+        buffers_[i].height = fmt_.fmt.pix_mp.height;
+        buffers_[i].stride_w = fmt_.fmt.pix_mp.width;
+        buffers_[i].stride_h = fmt_.fmt.pix_mp.height;
+
+        buffers_[i].format = static_cast<PixelFormat>(fmt_.fmt.pix_mp.pixelformat);
 
         // Export DMA-BUF file descriptor for Zero-Copy pipeline
         struct v4l2_exportbuffer expbuf;
@@ -217,9 +223,9 @@ bool V4L2Camera::request_and_mmap_buffers(uint32_t buffer_count) {
 
 void V4L2Camera::unmap_and_release_buffers() {
     for (auto& buf : buffers_) {
-        if (buf.start && buf.start != MAP_FAILED) {
-            munmap(buf.start, buf.length);
-            buf.start = nullptr;
+        if (buf.vir_addr && buf.vir_addr != MAP_FAILED) {
+            munmap(buf.vir_addr, buf.size);
+            buf.vir_addr = nullptr;
         }
         if (buf.dma_fd >= 0) {
             close(buf.dma_fd);
@@ -257,7 +263,7 @@ bool V4L2Camera::stop_stream() {
     return true;
 }
 
-bool V4L2Camera::dequeue_frame(FrameBuffer& buffer, int timeout_ms) {
+bool V4L2Camera::dequeue_frame(VideoFrame& buffer, int timeout_ms) {
     if (!is_streaming_) return false;
 
     fd_set fds;
@@ -298,7 +304,7 @@ bool V4L2Camera::dequeue_frame(FrameBuffer& buffer, int timeout_ms) {
     return true;
 }
 
-bool V4L2Camera::enqueue_frame(const FrameBuffer& buffer) {
+bool V4L2Camera::enqueue_frame(const VideoFrame& buffer) {
     if (!is_streaming_) return false;
 
     struct v4l2_buffer buf;
@@ -308,12 +314,12 @@ bool V4L2Camera::enqueue_frame(const FrameBuffer& buffer) {
 
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     buf.memory = V4L2_MEMORY_MMAP;
-    buf.index = buffer.index;
+    buf.index = buffer.buffer_index;
     buf.m.planes = planes;
     buf.length = 1;
 
     if (ioctl(fd_, VIDIOC_QBUF, &buf) < 0) {
-        std::cerr << "[V4L2 ERROR] VIDIOC_QBUF index " << buffer.index 
+        std::cerr << "[V4L2 ERROR] VIDIOC_QBUF index " << buffer.buffer_index 
                   << " failed: " << std::strerror(errno) << "\n";
         return false;
     }

@@ -13,17 +13,9 @@
 #include <cstddef>
 #include <linux/videodev2.h>
 
-namespace edge_camera {
+#include "pipeline/pipeline_types.hpp"
 
-/**
- * @brief Memory-mapped buffer descriptor managed by V4L2 kernel driver.
- */
-struct FrameBuffer {
-    void* start{nullptr};       ///< User-space virtual address mapped via mmap()
-    size_t length{0};          ///< Total buffer size in bytes
-    int dma_fd{-1};            ///< Exported DMA-BUF file descriptor (crucial for Phase 3 Zero-copy RGA)
-    uint32_t index{0};         ///< Ring-buffer index inside the V4L2 driver queue
-};
+namespace edge_camera {
 
 class V4L2Camera {
 public:
@@ -53,12 +45,12 @@ public:
      * @param[out] buffer Reference to mapped buffer information.
      * @param timeout_ms Max waiting time in milliseconds before returning false.
      */
-    bool dequeue_frame(FrameBuffer& buffer, int timeout_ms = 2000);
+    bool dequeue_frame(VideoFrame& buffer, int timeout_ms = 2000);
 
     /**
      * @brief Requeue the processed buffer back to the kernel driver.
      */
-    bool enqueue_frame(const FrameBuffer& buffer);
+    bool enqueue_frame(const VideoFrame& buffer);
 
     /**
      * @brief Stop streaming via VIDIOC_STREAMOFF
@@ -75,7 +67,8 @@ private:
     bool setup_format();
     bool request_and_mmap_buffers(uint32_t buffer_count);
     void unmap_and_release_buffers();
-
+    
+    struct v4l2_format fmt_;
     std::string device_path_;
     int fd_{-1};
     uint32_t width_{1920};
@@ -83,7 +76,7 @@ private:
     uint32_t pixel_format_{V4L2_PIX_FMT_NV12};
     bool is_streaming_{false};
 
-    std::vector<FrameBuffer> buffers_;
+    std::vector<VideoFrame> buffers_;
 };
 
 } // namespace edge_camera

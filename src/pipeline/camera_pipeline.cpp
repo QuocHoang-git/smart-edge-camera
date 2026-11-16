@@ -181,7 +181,7 @@ void CameraPipeline::capture_and_stream_loop() {
         uint32_t fps_counter = 0;
 
         while (is_running_) {
-            FrameBuffer main_frame;
+            VideoFrame main_frame;
             if (!camera_.dequeue_frame(main_frame, 1000)) {
                 continue;
             }
@@ -192,15 +192,15 @@ void CameraPipeline::capture_and_stream_loop() {
 
             // 1. RGA Hardware Blit #1: Downscale 1080p -> 640x360 NV12 into Sub-Stream buffer
             bool blit_sub_ok = rga_.blit_dma_to_dma(
-                main_frame.dma_fd, main_frame.length, config_.main_width, config_.main_height,
+                main_frame.dma_fd, main_frame.size, config_.main_width, config_.main_height,
                 sub_stream_dma_.fd(), sub_stream_dma_.size(), config_.sub_width, config_.sub_height,
                 RK_FORMAT_YCbCr_420_SP
             );
 
             // 2. Hardware MPP Main Stream Encode (1080p Clean, Evidence Quality)
-            camera::EncodedPacket main_pkt;
+            edge_camera::EncodedPacket main_pkt;
             bool main_encoded = mpp_main_->encode_dma(
-                main_frame.dma_fd, main_frame.length, pts_us, main_pkt
+                main_frame.dma_fd, main_frame.size, pts_us, main_pkt
             );
 
             if (main_encoded && rtsp_server_) {
@@ -260,7 +260,7 @@ void CameraPipeline::capture_and_stream_loop() {
                 }
 
                 // Hardware MPP Sub Stream Encode (640x360 with AI Bounding Box)
-                camera::EncodedPacket sub_pkt;
+                edge_camera::EncodedPacket sub_pkt;
                 bool sub_encoded = mpp_sub_->encode_dma(
                     sub_stream_dma_.fd(), sub_stream_dma_.size(), pts_us, sub_pkt
                 );
